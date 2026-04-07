@@ -134,6 +134,13 @@ export default function TodoeyPage() {
   }
 
   const styles = {
+    mobileControls: {
+      display: "grid",
+      gridTemplateColumns: "1fr 56px",
+      gap: "10px",
+      alignItems: "center",
+      marginBottom: "10px",
+    } as React.CSSProperties,
     page: {
       minHeight: "100vh",
       background: "#0b0b0d",
@@ -188,6 +195,31 @@ export default function TodoeyPage() {
       border: "1px solid #2f2f35",
       background: "#111114",
       marginBottom: "16px",
+    } as React.CSSProperties,
+    mobileMetaRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 120px",
+      gap: "10px",
+      alignItems: "center",
+      padding: "10px 12px",
+      borderRadius: "14px",
+      border: "1px solid #2f2f35",
+      background: "#111114",
+      marginBottom: "16px",
+    } as React.CSSProperties,
+    addButton: {
+      width: "56px",
+      height: "50px",
+      borderRadius: "12px",
+      border: "none",
+      background: "#8b5cf6",
+      color: "#ffffff",
+      fontSize: "30px",
+      fontWeight: 700,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
     } as React.CSSProperties,
     input: {
       width: "100%",
@@ -321,9 +353,9 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.helperText}>Press Enter in the task box to add a task.</div>
+            <div style={styles.helperText}>Press Enter on desktop or tap + on your phone to add a task.</div>
 
-            <div style={styles.entryRow}>
+            <div style={styles.mobileControls}>
               <input
                 ref={taskInputRef}
                 style={styles.input}
@@ -334,6 +366,17 @@ export default function TodoeyPage() {
                 }}
                 placeholder="What needs to get done?"
               />
+              <button
+                style={styles.addButton}
+                onClick={addTask}
+                aria-label="Add task"
+                title="Add task"
+              >
+                +
+              </button>
+            </div>
+
+            <div style={styles.mobileMetaRow}>
               <input
                 style={styles.input}
                 type="date"
