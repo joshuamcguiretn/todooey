@@ -31,12 +31,6 @@ function isDueTodayOrOlder(dueDate: string) {
   return dueDate <= today;
 }
 
-function priorityLabel(priority: Priority) {
-  if (priority === 1) return "High";
-  if (priority === 2) return "Medium";
-  return "Low";
-}
-
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -60,6 +54,8 @@ export default function TodoeyPage() {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(1);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -83,16 +79,20 @@ export default function TodoeyPage() {
     }
   }, [tasks]);
 
+  useEffect(() => {
+    taskInputRef.current?.focus();
+  }, []);
+
   const visibleTasks = useMemo(() => {
     return tasks
-      .filter((task) => !task.done)
-      .filter((task) => isDueTodayOrOlder(task.dueDate))
+      .filter((task) => (showCompleted ? task.done : !task.done))
+      .filter((task) => (showCompleted ? true : isDueTodayOrOlder(task.dueDate)))
       .sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
         if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
         return a.createdAt.localeCompare(b.createdAt);
       });
-  }, [tasks]);
+  }, [tasks, showCompleted]);
 
   const activeDueCount = useMemo(() => {
     return tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
@@ -123,24 +123,40 @@ export default function TodoeyPage() {
 
   function toggleDone(id: string) {
     setTasks((prev) =>
+      prev.map((task) => {
+        if (task.id !== id) return task;
+        const nextDone = !task.done;
+        if (nextDone) {
+          setLastCompletedTaskId(id);
+          setShowCompleted(false);
+        } else if (lastCompletedTaskId === id) {
+          setLastCompletedTaskId(null);
+        }
+        return { ...task, done: nextDone };
+      })
+    );
+  }
+
+  function undoLastComplete() {
+    if (!lastCompletedTaskId) return;
+
+    setTasks((prev) =>
       prev.map((task) =>
-        task.id === id ? { ...task, done: !task.done } : task
+        task.id === lastCompletedTaskId ? { ...task, done: false } : task
       )
     );
+    setLastCompletedTaskId(null);
+    window.setTimeout(() => {
+      taskInputRef.current?.focus();
+    }, 0);
   }
 
   function deleteTask(id: string) {
     setTasks((prev) => prev.filter((task) => task.id !== id));
+    if (lastCompletedTaskId === id) setLastCompletedTaskId(null);
   }
 
   const styles = {
-    mobileControls: {
-      display: "grid",
-      gridTemplateColumns: "1fr 56px",
-      gap: "10px",
-      alignItems: "center",
-      marginBottom: "10px",
-    } as React.CSSProperties,
     page: {
       minHeight: "100vh",
       background: "#0b0b0d",
@@ -180,21 +196,40 @@ export default function TodoeyPage() {
     section: {
       padding: "18px",
     } as React.CSSProperties,
-    helperText: {
-      fontSize: "13px",
-      color: "#9d9da5",
-      marginBottom: "10px",
+    controlsRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: "12px",
+      alignItems: "center",
+      marginBottom: "12px",
+      flexWrap: "wrap",
     } as React.CSSProperties,
-    entryRow: {
+    toggleButton: {
+      padding: "10px 12px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#ffffff",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: "14px",
+    } as React.CSSProperties,
+    undoButton: {
+      padding: "10px 12px",
+      borderRadius: "10px",
+      border: "none",
+      background: "#8b5cf6",
+      color: "#ffffff",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: "14px",
+    } as React.CSSProperties,
+    mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 160px 110px",
+      gridTemplateColumns: "1fr 56px",
       gap: "10px",
       alignItems: "center",
-      padding: "10px 12px",
-      borderRadius: "14px",
-      border: "1px solid #2f2f35",
-      background: "#111114",
-      marginBottom: "16px",
+      marginBottom: "10px",
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
@@ -347,13 +382,28 @@ export default function TodoeyPage() {
           <div style={styles.header}>ToDooey</div>
 
           <div style={styles.banner}>
-            {activeDueCount === 0
+            {showCompleted
+              ? `${visibleTasks.length} completed`
+              : activeDueCount === 0
               ? "And We’re Done!"
               : `${activeDueCount} task${activeDueCount === 1 ? "" : "s"} left`}
           </div>
 
           <div style={styles.section}>
-            <div style={styles.helperText}>Press Enter on desktop or tap + on your phone to add a task.</div>
+            <div style={styles.controlsRow}>
+              <button
+                style={styles.toggleButton}
+                onClick={() => setShowCompleted((prev) => !prev)}
+              >
+                {showCompleted ? "Show active" : "Show completed"}
+              </button>
+
+              {lastCompletedTaskId && !showCompleted ? (
+                <button style={styles.undoButton} onClick={undoLastComplete}>
+                  Undo last complete
+                </button>
+              ) : null}
+            </div>
 
             <div style={styles.mobileControls}>
               <input
@@ -395,7 +445,9 @@ export default function TodoeyPage() {
             </div>
 
             {visibleTasks.length === 0 ? (
-              <div style={styles.empty}>Nothing showing right now.</div>
+              <div style={styles.empty}>
+                {showCompleted ? "No completed tasks." : "Nothing showing right now."}
+              </div>
             ) : (
               <div style={styles.tableWrap}>
                 <div style={styles.headerRow}>
@@ -427,7 +479,7 @@ export default function TodoeyPage() {
 
                     <div style={styles.taskText}>{task.title}</div>
 
-                    <div style={styles.dueCell}>Due {dueText(task.dueDate)}</div>
+                    <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
 
                     <div>
                       <span style={styles.priorityPill}>{task.priority}</span>
@@ -438,7 +490,7 @@ export default function TodoeyPage() {
                         style={styles.smallButton}
                         onClick={() => toggleDone(task.id)}
                       >
-                        Mark Done
+                        {task.done ? "Mark Active" : "Mark Done"}
                       </button>
                       <button
                         style={styles.dangerButton}
