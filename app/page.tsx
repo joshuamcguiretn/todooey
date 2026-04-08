@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type Priority = 1 | 2 | 3;
+type Priority = 1 | 2;
 
 type Task = {
   id: string;
@@ -53,7 +53,7 @@ export default function TodoeyPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
-  const [priority, setPriority] = useState<Priority>(1);
+  const [priority, setPriority] = useState<Priority>(2);
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
@@ -114,7 +114,7 @@ export default function TodoeyPage() {
     setTasks((prev) => [...prev, newTask]);
     setTitle("");
     setDueDate(formatDateInput());
-    setPriority(1);
+    setPriority(2);
 
     window.setTimeout(() => {
       taskInputRef.current?.focus();
@@ -149,11 +149,6 @@ export default function TodoeyPage() {
     window.setTimeout(() => {
       taskInputRef.current?.focus();
     }, 0);
-  }
-
-  function deleteTask(id: string) {
-    setTasks((prev) => prev.filter((task) => task.id !== id));
-    if (lastCompletedTaskId === id) setLastCompletedTaskId(null);
   }
 
   const styles = {
@@ -286,10 +281,10 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     itemRow: {
       display: "grid",
-      gridTemplateColumns: "34px 1fr auto 90px",
+      gridTemplateColumns: "28px 1fr 24px",
       gap: "8px",
       alignItems: "start",
-      padding: "12px 10px",
+      padding: "12px 8px",
       borderBottom: "1px solid #24242a",
       background: "#111114",
     } as React.CSSProperties,
@@ -325,34 +320,7 @@ export default function TodoeyPage() {
       fontSize: "18px",
       lineHeight: 1,
       paddingTop: "2px",
-    } as React.CSSProperties,
-    actionCell: {
-      display: "flex",
-      justifyContent: "flex-end",
-      gap: "8px",
-      alignItems: "center",
-    } as React.CSSProperties,
-    smallButton: {
-      padding: "9px 10px",
-      borderRadius: "10px",
-      border: "none",
-      background: "#44444b",
-      color: "white",
-      cursor: "pointer",
-      fontWeight: 700,
-      fontSize: "13px",
-      whiteSpace: "nowrap",
-    } as React.CSSProperties,
-    dangerButton: {
-      padding: "9px 10px",
-      borderRadius: "10px",
-      border: "none",
-      background: "#dc2626",
-      color: "white",
-      cursor: "pointer",
-      fontWeight: 700,
-      fontSize: "13px",
-      whiteSpace: "nowrap",
+      textAlign: "right",
     } as React.CSSProperties,
     empty: {
       background: "#111114",
@@ -428,9 +396,8 @@ export default function TodoeyPage() {
                 value={priority}
                 onChange={(e) => setPriority(Number(e.target.value) as Priority)}
               >
-                <option value={1}>1 - High</option>
-                <option value={2}>2 - Medium</option>
-                <option value={3}>3 - Low</option>
+                <option value={1}>Priority</option>
+                <option value={2}>Normal</option>
               </select>
             </div>
 
@@ -465,21 +432,6 @@ export default function TodoeyPage() {
                     </div>
 
                     <div style={styles.fireCell}>{task.priority === 1 ? "🔥" : ""}</div>
-
-                    <div style={styles.actionCell}>
-                      <button
-                        style={styles.smallButton}
-                        onClick={() => toggleDone(task.id)}
-                      >
-                        {task.done ? "Mark Active" : "Done"}
-                      </button>
-                      <button
-                        style={styles.dangerButton}
-                        onClick={() => deleteTask(task.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
                   </div>
                 ))}
               </div>
