@@ -42,11 +42,11 @@ function dueText(dueDate: string) {
   const diffMs = today.getTime() - due.getTime();
   const diffDays = Math.round(diffMs / 86400000);
 
-  if (diffDays === 0) return "today";
-  if (diffDays === 1) return "yesterday";
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
   if (diffDays > 1) return `${diffDays} days ago`;
-  if (diffDays === -1) return "tomorrow";
-  return `in ${Math.abs(diffDays)} days`;
+  if (diffDays === -1) return "Tomorrow";
+  return `In ${Math.abs(diffDays)} days`;
 }
 
 export default function TodoeyPage() {
@@ -278,91 +278,81 @@ export default function TodoeyPage() {
       boxSizing: "border-box",
       outline: "none",
     } as React.CSSProperties,
-    tableWrap: {
+    listWrap: {
       borderRadius: "16px",
       overflow: "hidden",
       border: "1px solid #2f2f35",
       background: "#111114",
     } as React.CSSProperties,
-    headerRow: {
+    itemRow: {
       display: "grid",
-      gridTemplateColumns: "48px minmax(260px, 1fr) 190px 90px 180px",
-      gap: "0",
-      alignItems: "center",
-      padding: "0 10px",
-      minHeight: "48px",
-      background: "#1a1a1f",
-      color: "#a9a9b2",
-      fontSize: "14px",
-      fontWeight: 700,
-      borderBottom: "1px solid #2f2f35",
-    } as React.CSSProperties,
-    dataRow: {
-      display: "grid",
-      gridTemplateColumns: "48px minmax(260px, 1fr) 190px 90px 180px",
-      gap: "0",
-      alignItems: "center",
-      padding: "0 10px",
-      minHeight: "64px",
+      gridTemplateColumns: "34px 1fr auto 90px",
+      gap: "8px",
+      alignItems: "start",
+      padding: "12px 10px",
       borderBottom: "1px solid #24242a",
       background: "#111114",
     } as React.CSSProperties,
     checkboxCell: {
       display: "flex",
       justifyContent: "center",
-      alignItems: "center",
+      alignItems: "flex-start",
+      paddingTop: "4px",
     } as React.CSSProperties,
     checkbox: {
       width: "18px",
       height: "18px",
       cursor: "pointer",
+      margin: 0,
+    } as React.CSSProperties,
+    taskBlock: {
+      minWidth: 0,
     } as React.CSSProperties,
     taskText: {
-      fontSize: "20px",
+      fontSize: "19px",
       fontWeight: 600,
       color: "#ffffff",
-      paddingRight: "12px",
+      lineHeight: 1.2,
+      wordBreak: "break-word",
     } as React.CSSProperties,
     dueCell: {
-      fontSize: "15px",
-      color: "#d5d5da",
+      fontSize: "13px",
+      color: "#aeb0b8",
+      marginTop: "4px",
+      paddingLeft: "10px",
     } as React.CSSProperties,
-    priorityPill: {
-      display: "inline-flex",
-      justifyContent: "center",
-      alignItems: "center",
-      minWidth: "56px",
-      padding: "8px 10px",
-      borderRadius: "999px",
-      background: "#2e2e37",
-      color: "#ffffff",
-      fontSize: "14px",
-      fontWeight: 700,
+    fireCell: {
+      fontSize: "18px",
+      lineHeight: 1,
+      paddingTop: "2px",
     } as React.CSSProperties,
     actionCell: {
       display: "flex",
       justifyContent: "flex-end",
       gap: "8px",
+      alignItems: "center",
     } as React.CSSProperties,
     smallButton: {
-      padding: "10px 12px",
+      padding: "9px 10px",
       borderRadius: "10px",
       border: "none",
       background: "#44444b",
       color: "white",
       cursor: "pointer",
       fontWeight: 700,
-      fontSize: "14px",
+      fontSize: "13px",
+      whiteSpace: "nowrap",
     } as React.CSSProperties,
     dangerButton: {
-      padding: "10px 12px",
+      padding: "9px 10px",
       borderRadius: "10px",
       border: "none",
       background: "#dc2626",
       color: "white",
       cursor: "pointer",
       fontWeight: 700,
-      fontSize: "14px",
+      fontSize: "13px",
+      whiteSpace: "nowrap",
     } as React.CSSProperties,
     empty: {
       background: "#111114",
@@ -449,22 +439,14 @@ export default function TodoeyPage() {
                 {showCompleted ? "No completed tasks." : "Nothing showing right now."}
               </div>
             ) : (
-              <div style={styles.tableWrap}>
-                <div style={styles.headerRow}>
-                  <div></div>
-                  <div>Task</div>
-                  <div>Due</div>
-                  <div>P</div>
-                  <div style={{ textAlign: "right" }}>Actions</div>
-                </div>
-
+              <div style={styles.listWrap}>
                 {visibleTasks.map((task, index) => (
                   <div
                     key={task.id}
                     style={{
-                      ...styles.dataRow,
+                      ...styles.itemRow,
                       borderBottom:
-                        index === visibleTasks.length - 1 ? "none" : styles.dataRow.borderBottom,
+                        index === visibleTasks.length - 1 ? "none" : styles.itemRow.borderBottom,
                     }}
                   >
                     <div style={styles.checkboxCell}>
@@ -477,20 +459,19 @@ export default function TodoeyPage() {
                       />
                     </div>
 
-                    <div style={styles.taskText}>{task.title}</div>
-
-                    <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
-
-                    <div>
-                      <span style={styles.priorityPill}>{task.priority}</span>
+                    <div style={styles.taskBlock}>
+                      <div style={styles.taskText}>{task.title}</div>
+                      <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
                     </div>
+
+                    <div style={styles.fireCell}>{task.priority === 1 ? "🔥" : ""}</div>
 
                     <div style={styles.actionCell}>
                       <button
                         style={styles.smallButton}
                         onClick={() => toggleDone(task.id)}
                       >
-                        {task.done ? "Mark Active" : "Mark Done"}
+                        {task.done ? "Mark Active" : "Done"}
                       </button>
                       <button
                         style={styles.dangerButton}
