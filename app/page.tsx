@@ -3,12 +3,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Priority = 1 | 2;
+type Recurrence = "none" | "daily" | "weekly" | "monthly";
 
 type Task = {
   id: string;
   title: string;
   dueDate: string;
   priority: Priority;
+  recurrence: Recurrence;
   done: boolean;
   createdAt: string;
 };
@@ -54,6 +56,7 @@ export default function TodoeyPage() {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
+  const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
@@ -107,6 +110,7 @@ export default function TodoeyPage() {
       title: cleaned,
       dueDate,
       priority,
+      recurrence,
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -115,6 +119,7 @@ export default function TodoeyPage() {
     setTitle("");
     setDueDate(formatDateInput());
     setPriority(2);
+    setRecurrence("none");
 
     window.setTimeout(() => {
       taskInputRef.current?.focus();
@@ -191,6 +196,34 @@ export default function TodoeyPage() {
     section: {
       padding: "18px",
     } as React.CSSProperties,
+    toggleIconButton: {
+      width: "48px",
+      height: "48px",
+      borderRadius: "12px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#8b8b92",
+      fontSize: "22px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "all 0.15s ease",
+    } as React.CSSProperties,
+    activeToggleIconButton: {
+      width: "48px",
+      height: "48px",
+      borderRadius: "12px",
+      border: "1px solid #6d28d9",
+      background: "#15111d",
+      color: "#ffffff",
+      fontSize: "22px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "all 0.15s ease",
+    } as React.CSSProperties,
     controlsRow: {
       display: "flex",
       justifyContent: "space-between",
@@ -221,14 +254,14 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 56px",
+      gridTemplateColumns: "1fr 48px 48px 56px",
       gap: "10px",
       alignItems: "center",
       marginBottom: "10px",
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
-      gridTemplateColumns: "1fr 120px",
+      gridTemplateColumns: "1fr",
       gap: "10px",
       alignItems: "center",
       padding: "10px 12px",
@@ -236,6 +269,32 @@ export default function TodoeyPage() {
       border: "1px solid #2f2f35",
       background: "#111114",
       marginBottom: "16px",
+    } as React.CSSProperties,
+    recurrenceRow: {
+      display: "flex",
+      gap: "8px",
+      flexWrap: "wrap",
+      marginBottom: "16px",
+    } as React.CSSProperties,
+    recurrenceChip: {
+      padding: "9px 12px",
+      borderRadius: "999px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#cfcfd6",
+      fontSize: "14px",
+      fontWeight: 700,
+      cursor: "pointer",
+    } as React.CSSProperties,
+    recurrenceChipActive: {
+      padding: "9px 12px",
+      borderRadius: "999px",
+      border: "1px solid #6d28d9",
+      background: "#1b1525",
+      color: "#ffffff",
+      fontSize: "14px",
+      fontWeight: 700,
+      cursor: "pointer",
     } as React.CSSProperties,
     addButton: {
       width: "56px",
@@ -375,6 +434,22 @@ export default function TodoeyPage() {
                 placeholder="What needs to get done?"
               />
               <button
+                style={priority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
+                onClick={() => setPriority((prev) => (prev === 1 ? 2 : 1))}
+                aria-label="Toggle priority"
+                title="Toggle priority"
+              >
+                🔥
+              </button>
+              <button
+                style={recurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
+                onClick={() => setRecurrence((prev) => (prev === "none" ? "daily" : "none"))}
+                aria-label="Toggle recurrence"
+                title="Toggle recurrence"
+              >
+                🔄
+              </button>
+              <button
                 style={styles.addButton}
                 onClick={addTask}
                 aria-label="Add task"
@@ -391,15 +466,30 @@ export default function TodoeyPage() {
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
               />
-              <select
-                style={styles.select}
-                value={priority}
-                onChange={(e) => setPriority(Number(e.target.value) as Priority)}
-              >
-                <option value={1}>Priority</option>
-                <option value={2}>Normal</option>
-              </select>
             </div>
+
+            {recurrence !== "none" ? (
+              <div style={styles.recurrenceRow}>
+                <button
+                  style={recurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setRecurrence("daily")}
+                >
+                  Daily
+                </button>
+                <button
+                  style={recurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setRecurrence("weekly")}
+                >
+                  Weekly
+                </button>
+                <button
+                  style={recurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setRecurrence("monthly")}
+                >
+                  Monthly
+                </button>
+              </div>
+            ) : null}
 
             {visibleTasks.length === 0 ? (
               <div style={styles.empty}>
@@ -431,7 +521,9 @@ export default function TodoeyPage() {
                       <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
                     </div>
 
-                    <div style={styles.fireCell}>{task.priority === 1 ? "🔥" : ""}</div>
+                    <div style={styles.fireCell}>
+                      {task.priority === 1 ? "🔥" : task.recurrence !== "none" ? "🔄" : ""}
+                    </div>
                   </div>
                 ))}
               </div>
