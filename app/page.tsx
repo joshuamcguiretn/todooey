@@ -84,7 +84,24 @@ export default function TodoeyPage() {
 
     if (saved) {
       try {
-        setTasks(JSON.parse(saved));
+        const parsed = JSON.parse(saved) as Partial<Task>[];
+
+        const normalized: Task[] = parsed.map((task) => ({
+          id: task.id ?? generateId(),
+          title: task.title ?? "",
+          dueDate: task.dueDate ?? formatDateInput(),
+          priority: task.priority === 1 ? 1 : 2,
+          recurrence:
+            task.recurrence === "daily" ||
+            task.recurrence === "weekly" ||
+            task.recurrence === "monthly"
+              ? task.recurrence
+              : "none",
+          done: Boolean(task.done),
+          createdAt: task.createdAt ?? new Date().toISOString(),
+        }));
+
+        setTasks(normalized);
       } catch {
         setTasks([]);
       }
@@ -146,7 +163,12 @@ export default function TodoeyPage() {
       prev.map((task) => {
         if (task.id !== id) return task;
 
-        if (!task.done && task.recurrence !== "none") {
+        const isRecurring =
+          task.recurrence === "daily" ||
+          task.recurrence === "weekly" ||
+          task.recurrence === "monthly";
+
+        if (!task.done && isRecurring) {
           return {
             ...task,
             dueDate: advanceRecurringDate(task.dueDate, task.recurrence),
@@ -155,12 +177,14 @@ export default function TodoeyPage() {
         }
 
         const nextDone = !task.done;
+
         if (nextDone) {
           setLastCompletedTaskId(id);
           setShowCompleted(false);
         } else if (lastCompletedTaskId === id) {
           setLastCompletedTaskId(null);
         }
+
         return { ...task, done: nextDone };
       })
     );
@@ -175,6 +199,7 @@ export default function TodoeyPage() {
       )
     );
     setLastCompletedTaskId(null);
+
     window.setTimeout(() => {
       taskInputRef.current?.focus();
     }, 0);
