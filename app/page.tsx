@@ -11,6 +11,7 @@ type Task = {
   dueDate: string;
   priority: Priority;
   recurrence: Recurrence;
+  description: string;
   done: boolean;
   createdAt: string;
 };
@@ -74,6 +75,12 @@ export default function TodoeyPage() {
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDueDate, setEditDueDate] = useState(formatDateInput());
+  const [editPriority, setEditPriority] = useState<Priority>(2);
+  const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
+  const [editDescription, setEditDescription] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -97,6 +104,7 @@ export default function TodoeyPage() {
             task.recurrence === "monthly"
               ? task.recurrence
               : "none",
+          description: task.description ?? "",
           done: Boolean(task.done),
           createdAt: task.createdAt ?? new Date().toISOString(),
         }));
@@ -133,6 +141,10 @@ export default function TodoeyPage() {
     return tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
   }, [tasks]);
 
+  const editingTask = useMemo(() => {
+    return tasks.find((task) => task.id === editingTaskId) ?? null;
+  }, [tasks, editingTaskId]);
+
   function addTask() {
     const cleaned = title.trim();
     if (!cleaned) return;
@@ -143,6 +155,7 @@ export default function TodoeyPage() {
       dueDate,
       priority,
       recurrence,
+      description: "",
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -156,6 +169,43 @@ export default function TodoeyPage() {
     window.setTimeout(() => {
       taskInputRef.current?.focus();
     }, 0);
+  }
+
+  function openEditor(task: Task) {
+    setEditingTaskId(task.id);
+    setEditTitle(task.title);
+    setEditDueDate(task.dueDate);
+    setEditPriority(task.priority);
+    setEditRecurrence(task.recurrence);
+    setEditDescription(task.description ?? "");
+  }
+
+  function closeEditor() {
+    setEditingTaskId(null);
+    window.setTimeout(() => {
+      taskInputRef.current?.focus();
+    }, 0);
+  }
+
+  function saveEdit() {
+    const cleaned = editTitle.trim();
+    if (!editingTaskId || !cleaned) return;
+
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === editingTaskId
+          ? {
+              ...task,
+              title: cleaned,
+              dueDate: editDueDate,
+              priority: editPriority,
+              recurrence: editRecurrence,
+              description: editDescription.trim(),
+            }
+          : task
+      )
+    );
+    closeEditor();
   }
 
   function toggleDone(id: string) {
@@ -370,6 +420,20 @@ export default function TodoeyPage() {
       boxSizing: "border-box",
       outline: "none",
     } as React.CSSProperties,
+    textArea: {
+      width: "100%",
+      minHeight: "92px",
+      padding: "12px 14px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#ffffff",
+      fontSize: "16px",
+      boxSizing: "border-box",
+      outline: "none",
+      resize: "vertical",
+      fontFamily: "Arial, sans-serif",
+    } as React.CSSProperties,
     listWrap: {
       borderRadius: "16px",
       overflow: "hidden",
@@ -400,12 +464,20 @@ export default function TodoeyPage() {
     taskBlock: {
       minWidth: 0,
     } as React.CSSProperties,
-    taskText: {
+    taskTextButton: {
+      display: "block",
+      width: "100%",
+      padding: 0,
+      border: "none",
+      background: "transparent",
+      color: "#ffffff",
+      textAlign: "left",
       fontSize: "19px",
       fontWeight: 600,
-      color: "#ffffff",
       lineHeight: 1.2,
       wordBreak: "break-word",
+      cursor: "pointer",
+      fontFamily: "Arial, sans-serif",
     } as React.CSSProperties,
     dueCell: {
       fontSize: "13px",
@@ -427,6 +499,75 @@ export default function TodoeyPage() {
       textAlign: "center",
       color: "#9d9da5",
       fontSize: "18px",
+    } as React.CSSProperties,
+    modalOverlay: {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0, 0, 0, 0.72)",
+      zIndex: 50,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "18px",
+    } as React.CSSProperties,
+    modal: {
+      width: "100%",
+      maxWidth: "560px",
+      maxHeight: "92vh",
+      overflowY: "auto",
+      background: "#17171a",
+      border: "1px solid #3f3f48",
+      borderRadius: "22px",
+      boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+      padding: "18px",
+    } as React.CSSProperties,
+    modalTitle: {
+      fontSize: "24px",
+      fontWeight: 800,
+      marginBottom: "14px",
+    } as React.CSSProperties,
+    fieldGroup: {
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    fieldLabel: {
+      display: "block",
+      marginBottom: "6px",
+      fontSize: "13px",
+      color: "#aeb0b8",
+      fontWeight: 700,
+    } as React.CSSProperties,
+    modalMetaRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 48px 48px",
+      gap: "10px",
+      alignItems: "center",
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    modalActions: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "10px",
+      marginTop: "16px",
+    } as React.CSSProperties,
+    saveButton: {
+      padding: "12px 14px",
+      borderRadius: "12px",
+      border: "none",
+      background: "#8b5cf6",
+      color: "#ffffff",
+      fontWeight: 800,
+      fontSize: "16px",
+      cursor: "pointer",
+    } as React.CSSProperties,
+    cancelButton: {
+      padding: "12px 14px",
+      borderRadius: "12px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#ffffff",
+      fontWeight: 800,
+      fontSize: "16px",
+      cursor: "pointer",
     } as React.CSSProperties,
   };
 
@@ -555,7 +696,12 @@ export default function TodoeyPage() {
                     </div>
 
                     <div style={styles.taskBlock}>
-                      <div style={styles.taskText}>{task.title}</div>
+                      <button
+                        style={styles.taskTextButton}
+                        onClick={() => openEditor(task)}
+                      >
+                        {task.title}
+                      </button>
                       <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
                     </div>
 
@@ -567,6 +713,93 @@ export default function TodoeyPage() {
           </div>
         </div>
       </div>
+
+      {editingTask ? (
+        <div style={styles.modalOverlay} onClick={closeEditor}>
+          <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalTitle}>Edit Task</div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>Task name</label>
+              <input
+                style={styles.input}
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>Date / Priority / Recurring</label>
+              <div style={styles.modalMetaRow}>
+                <input
+                  style={styles.input}
+                  type="date"
+                  value={editDueDate}
+                  onChange={(e) => setEditDueDate(e.target.value)}
+                />
+                <button
+                  style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
+                  onClick={() => setEditPriority((prev) => (prev === 1 ? 2 : 1))}
+                  aria-label="Toggle priority"
+                  title="Toggle priority"
+                >
+                  🔥
+                </button>
+                <button
+                  style={editRecurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
+                  onClick={() => setEditRecurrence((prev) => (prev === "none" ? "daily" : "none"))}
+                  aria-label="Toggle recurrence"
+                  title="Toggle recurrence"
+                >
+                  🔄
+                </button>
+              </div>
+            </div>
+
+            {editRecurrence !== "none" ? (
+              <div style={styles.recurrenceRow}>
+                <button
+                  style={editRecurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setEditRecurrence("daily")}
+                >
+                  Daily
+                </button>
+                <button
+                  style={editRecurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setEditRecurrence("weekly")}
+                >
+                  Weekly
+                </button>
+                <button
+                  style={editRecurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                  onClick={() => setEditRecurrence("monthly")}
+                >
+                  Monthly
+                </button>
+              </div>
+            ) : null}
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>Description</label>
+              <textarea
+                style={styles.textArea}
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="Add extra details if needed"
+              />
+            </div>
+
+            <div style={styles.modalActions}>
+              <button style={styles.cancelButton} onClick={closeEditor}>
+                Cancel
+              </button>
+              <button style={styles.saveButton} onClick={saveEdit}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
