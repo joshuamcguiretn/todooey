@@ -11,6 +11,7 @@ type Task = {
   dueDate: string;
   priority: Priority;
   recurrence: Recurrence;
+  recurrenceInterval: number;
   description: string;
   done: boolean;
   createdAt: string;
@@ -52,16 +53,29 @@ function dueText(dueDate: string) {
   return `In ${Math.abs(diffDays)} days`;
 }
 
-function advanceRecurringDate(dueDate: string, recurrence: Recurrence) {
-  const [year, month, day] = dueDate.split("-").map(Number);
-  const next = new Date(year, month - 1, day);
+function normalizeInterval(value: unknown) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 1;
+  return Math.max(1, Math.floor(numberValue));
+}
+
+function recurrenceUnit(recurrence: Recurrence, interval: number) {
+  if (recurrence === "daily") return interval === 1 ? "day" : "days";
+  if (recurrence === "weekly") return interval === 1 ? "week" : "weeks";
+  if (recurrence === "monthly") return interval === 1 ? "month" : "months";
+  return "";
+}
+
+function advanceRecurringDate(recurrence: Recurrence, intervalInput: number) {
+  const interval = normalizeInterval(intervalInput);
+  const next = startOfDay(new Date());
 
   if (recurrence === "daily") {
-    next.setDate(next.getDate() + 1);
+    next.setDate(next.getDate() + interval);
   } else if (recurrence === "weekly") {
-    next.setDate(next.getDate() + 7);
+    next.setDate(next.getDate() + interval * 7);
   } else if (recurrence === "monthly") {
-    next.setMonth(next.getMonth() + 1);
+    next.setMonth(next.getMonth() + interval);
   }
 
   return formatDateInput(next);
@@ -73,6 +87,7 @@ export default function TodoeyPage() {
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
+  const [recurrenceInterval, setRecurrenceInterval] = useState(1);
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -80,6 +95,7 @@ export default function TodoeyPage() {
   const [editDueDate, setEditDueDate] = useState(formatDateInput());
   const [editPriority, setEditPriority] = useState<Priority>(2);
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
+  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
   const [editDescription, setEditDescription] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -104,6 +120,7 @@ export default function TodoeyPage() {
             task.recurrence === "monthly"
               ? task.recurrence
               : "none",
+          recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
           description: task.description ?? "",
           done: Boolean(task.done),
           createdAt: task.createdAt ?? new Date().toISOString(),
@@ -145,6 +162,14 @@ export default function TodoeyPage() {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
   }, [tasks, editingTaskId]);
 
+  function resetNewTaskInputs() {
+    setTitle("");
+    setDueDate(formatDateInput());
+    setPriority(2);
+    setRecurrence("none");
+    setRecurrenceInterval(1);
+  }
+
   function addTask() {
     const cleaned = title.trim();
     if (!cleaned) return;
@@ -155,16 +180,14 @@ export default function TodoeyPage() {
       dueDate,
       priority,
       recurrence,
+      recurrenceInterval: normalizeInterval(recurrenceInterval),
       description: "",
       done: false,
       createdAt: new Date().toISOString(),
     };
 
     setTasks((prev) => [...prev, newTask]);
-    setTitle("");
-    setDueDate(formatDateInput());
-    setPriority(2);
-    setRecurrence("none");
+    resetNewTaskInputs();
 
     window.setTimeout(() => {
       taskInputRef.current?.focus();
@@ -177,11 +200,22 @@ export default function TodoeyPage() {
     setEditDueDate(task.dueDate);
     setEditPriority(task.priority);
     setEditRecurrence(task.recurrence);
+    setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
     setEditDescription(task.description ?? "");
   }
 
-  function closeEditor() {
+  function clearEditState() {
     setEditingTaskId(null);
+    setEditTitle("");
+    setEditDueDate(formatDateInput());
+    setEditPriority(2);
+    setEditRecurrence("none");
+    setEditRecurrenceInterval(1);
+    setEditDescription("");
+  }
+
+  function closeEditor() {
+    clearEditState();
     window.setTimeout(() => {
       taskInputRef.current?.focus();
     }, 0);
@@ -189,17 +223,19 @@ export default function TodoeyPage() {
 
   function saveEdit() {
     const cleaned = editTitle.trim();
-    if (!editingTaskId || !cleaned) return;
+    const taskIdToSave = editingTaskId;
+    if (!taskIdToSave || !cleaned) return;
 
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === editingTaskId
+        task.id === taskIdToSave
           ? {
               ...task,
               title: cleaned,
               dueDate: editDueDate,
               priority: editPriority,
               recurrence: editRecurrence,
+              recurrenceInterval: normalizeInterval(editRecurrenceInterval),
               description: editDescription.trim(),
             }
           : task
@@ -209,6 +245,10 @@ export default function TodoeyPage() {
   }
 
   function toggleDone(id: string) {
+    if (editingTaskId === id) {
+      clearEditState();
+    }
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id !== id) return task;
@@ -221,7 +261,7 @@ export default function TodoeyPage() {
         if (!task.done && isRecurring) {
           return {
             ...task,
-            dueDate: advanceRecurringDate(task.dueDate, task.recurrence),
+            dueDate: advanceRecurringDate(task.recurrence, task.recurrenceInterval),
             done: false,
           };
         }
@@ -345,6 +385,7 @@ export default function TodoeyPage() {
       display: "flex",
       gap: "8px",
       flexWrap: "wrap",
+      alignItems: "center",
       marginBottom: "16px",
     } as React.CSSProperties,
     recurrenceChip: {
@@ -366,6 +407,30 @@ export default function TodoeyPage() {
       fontSize: "14px",
       fontWeight: 700,
       cursor: "pointer",
+    } as React.CSSProperties,
+    intervalControl: {
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "8px 10px",
+      borderRadius: "999px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#cfcfd6",
+      fontSize: "14px",
+      fontWeight: 700,
+    } as React.CSSProperties,
+    intervalInput: {
+      width: "58px",
+      padding: "7px 8px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#ffffff",
+      fontSize: "15px",
+      boxSizing: "border-box",
+      outline: "none",
+      textAlign: "center",
     } as React.CSSProperties,
     toggleIconButton: {
       width: "48px",
@@ -463,8 +528,10 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     taskBlock: {
       minWidth: 0,
+      cursor: "pointer",
+      padding: "2px 0",
     } as React.CSSProperties,
-    taskTextButton: {
+    taskText: {
       display: "block",
       width: "100%",
       padding: 0,
@@ -667,6 +734,17 @@ export default function TodoeyPage() {
                 >
                   Monthly
                 </button>
+                <div style={styles.intervalControl}>
+                  Every
+                  <input
+                    style={styles.intervalInput}
+                    type="number"
+                    min={1}
+                    value={recurrenceInterval}
+                    onChange={(e) => setRecurrenceInterval(normalizeInterval(e.target.value))}
+                  />
+                  {recurrenceUnit(recurrence, recurrenceInterval)}
+                </div>
               </div>
             ) : null}
 
@@ -695,13 +773,8 @@ export default function TodoeyPage() {
                       />
                     </div>
 
-                    <div style={styles.taskBlock}>
-                      <button
-                        style={styles.taskTextButton}
-                        onClick={() => openEditor(task)}
-                      >
-                        {task.title}
-                      </button>
+                    <div style={styles.taskBlock} onClick={() => openEditor(task)}>
+                      <div style={styles.taskText}>{task.title}</div>
                       <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
                     </div>
 
@@ -776,6 +849,17 @@ export default function TodoeyPage() {
                 >
                   Monthly
                 </button>
+                <div style={styles.intervalControl}>
+                  Every
+                  <input
+                    style={styles.intervalInput}
+                    type="number"
+                    min={1}
+                    value={editRecurrenceInterval}
+                    onChange={(e) => setEditRecurrenceInterval(normalizeInterval(e.target.value))}
+                  />
+                  {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
+                </div>
               </div>
             ) : null}
 
