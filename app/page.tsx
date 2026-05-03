@@ -735,17 +735,6 @@ export default function TodoeyPage() {
               </button>
             </div>
 
-            {showNewDescription ? (
-              <div style={styles.newDescriptionBox}>
-                <textarea
-                  style={styles.textArea}
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="Add extra details if needed"
-                />
-              </div>
-            ) : null}
-
             <div style={styles.mobileMetaRow}>
               <input
                 style={styles.input}
