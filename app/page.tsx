@@ -369,10 +369,42 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 40px 56px",
+      gridTemplateColumns: "1fr 56px",
       gap: "10px",
       alignItems: "center",
       marginBottom: "10px",
+    } as React.CSSProperties,
+    taskInputWrap: {
+      position: "relative",
+      width: "100%",
+    } as React.CSSProperties,
+    taskInputWithButton: {
+      width: "100%",
+      padding: "12px 44px 12px 14px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#ffffff",
+      fontSize: "16px",
+      boxSizing: "border-box",
+      outline: "none",
+    } as React.CSSProperties,
+    detailsArrowButton: {
+      position: "absolute",
+      right: "6px",
+      top: "50%",
+      transform: "translateY(-50%)",
+      width: "34px",
+      height: "34px",
+      borderRadius: "8px",
+      border: "none",
+      background: "transparent",
+      color: "#cfcfd6",
+      fontSize: "18px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
@@ -673,24 +705,26 @@ export default function TodoeyPage() {
           <div style={styles.section}>
 
             <div style={styles.mobileControls}>
-              <input
-                ref={taskInputRef}
-                style={styles.input}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") addTask();
-                }}
-                placeholder="What needs to get done?"
-              />
-              <button
-                style={showNewDescription ? styles.activeToggleIconButton : styles.toggleIconButton}
-                onClick={() => setShowNewDescription((prev) => !prev)}
-                aria-label="Toggle details"
-                title="Toggle details"
-              >
-                ⏷
-              </button>
+              <div style={styles.taskInputWrap}>
+                <input
+                  ref={taskInputRef}
+                  style={styles.taskInputWithButton}
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addTask();
+                  }}
+                  placeholder="What needs to get done?"
+                />
+                <button
+                  style={styles.detailsArrowButton}
+                  onClick={() => setShowNewDescription((prev) => !prev)}
+                  aria-label="Toggle details"
+                  title="Toggle details"
+                >
+                  {showNewDescription ? "▲" : "▼"}
+                </button>
+              </div>
               <button
                 style={styles.addButton}
                 onClick={addTask}
@@ -700,6 +734,17 @@ export default function TodoeyPage() {
                 +
               </button>
             </div>
+
+            {showNewDescription ? (
+              <div style={styles.newDescriptionBox}>
+                <textarea
+                  style={styles.textArea}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Add extra details if needed"
+                />
+              </div>
+            ) : null}
 
             <div style={styles.mobileMetaRow}>
               <input
