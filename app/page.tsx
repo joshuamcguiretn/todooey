@@ -369,7 +369,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 56px",
+      gridTemplateColumns: "1fr 40px 56px",
       gap: "10px",
       alignItems: "center",
       marginBottom: "10px",
@@ -684,6 +684,14 @@ export default function TodoeyPage() {
                 placeholder="What needs to get done?"
               />
               <button
+                style={showNewDescription ? styles.activeToggleIconButton : styles.toggleIconButton}
+                onClick={() => setShowNewDescription((prev) => !prev)}
+                aria-label="Toggle details"
+                title="Toggle details"
+              >
+                ⏷
+              </button>
+              <button
                 style={styles.addButton}
                 onClick={addTask}
                 aria-label="Add task"
@@ -751,13 +759,6 @@ export default function TodoeyPage() {
                 </div>
               </div>
             ) : null}
-
-            <button
-              style={styles.addDetailsButton}
-              onClick={() => setShowNewDescription((prev) => !prev)}
-            >
-              {showNewDescription ? "Hide details" : "+ Add details"}
-            </button>
 
             {showNewDescription ? (
               <div style={styles.newDescriptionBox}>
