@@ -88,6 +88,8 @@ export default function TodoeyPage() {
   const [priority, setPriority] = useState<Priority>(2);
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState(1);
+  const [newDescription, setNewDescription] = useState("");
+  const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -168,6 +170,8 @@ export default function TodoeyPage() {
     setPriority(2);
     setRecurrence("none");
     setRecurrenceInterval(1);
+    setNewDescription("");
+    setShowNewDescription(false);
   }
 
   function addTask() {
@@ -181,7 +185,7 @@ export default function TodoeyPage() {
       priority,
       recurrence,
       recurrenceInterval: normalizeInterval(recurrenceInterval),
-      description: "",
+      description: newDescription.trim(),
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -431,6 +435,20 @@ export default function TodoeyPage() {
       boxSizing: "border-box",
       outline: "none",
       textAlign: "center",
+    } as React.CSSProperties,
+    addDetailsButton: {
+      padding: "10px 12px",
+      borderRadius: "12px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#cfcfd6",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: "14px",
+      marginBottom: "10px",
+    } as React.CSSProperties,
+    newDescriptionBox: {
+      marginBottom: "16px",
     } as React.CSSProperties,
     toggleIconButton: {
       width: "48px",
@@ -745,6 +763,24 @@ export default function TodoeyPage() {
                   />
                   {recurrenceUnit(recurrence, recurrenceInterval)}
                 </div>
+              </div>
+            ) : null}
+
+            <button
+              style={styles.addDetailsButton}
+              onClick={() => setShowNewDescription((prev) => !prev)}
+            >
+              {showNewDescription ? "Hide details" : "+ Add details"}
+            </button>
+
+            {showNewDescription ? (
+              <div style={styles.newDescriptionBox}>
+                <textarea
+                  style={styles.textArea}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Add extra details if needed"
+                />
               </div>
             ) : null}
 
