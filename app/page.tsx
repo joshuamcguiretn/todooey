@@ -671,20 +671,6 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.controlsRow}>
-              <button
-                style={styles.toggleButton}
-                onClick={() => setShowCompleted((prev) => !prev)}
-              >
-                {showCompleted ? "Show active" : "Show completed"}
-              </button>
-
-              {lastCompletedTaskId && !showCompleted ? (
-                <button style={styles.undoButton} onClick={undoLastComplete}>
-                  Undo last complete
-                </button>
-              ) : null}
-            </div>
 
             <div style={styles.mobileControls}>
               <input
@@ -819,6 +805,21 @@ export default function TodoeyPage() {
                 ))}
               </div>
             )}
+
+            <div style={styles.controlsRow}>
+              <button
+                style={styles.toggleButton}
+                onClick={() => setShowCompleted((prev) => !prev)}
+              >
+                {showCompleted ? "Show active" : "Show completed"}
+              </button>
+
+              {lastCompletedTaskId && !showCompleted ? (
+                <button style={styles.undoButton} onClick={undoLastComplete}>
+                  Undo last complete
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
