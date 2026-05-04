@@ -92,6 +92,7 @@ export default function TodoeyPage() {
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
+  const [completingTaskIds, setCompletingTaskIds] = useState<string[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editDueDate, setEditDueDate] = useState(formatDateInput());
@@ -249,39 +250,58 @@ export default function TodoeyPage() {
   }
 
   function toggleDone(id: string) {
+    if (completingTaskIds.includes(id)) return;
+
     if (editingTaskId === id) {
       clearEditState();
     }
 
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id !== id) return task;
+    const taskToComplete = tasks.find((task) => task.id === id);
+    if (!taskToComplete) return;
 
-        const isRecurring =
-          task.recurrence === "daily" ||
-          task.recurrence === "weekly" ||
-          task.recurrence === "monthly";
+    const isRecurring =
+      taskToComplete.recurrence === "daily" ||
+      taskToComplete.recurrence === "weekly" ||
+      taskToComplete.recurrence === "monthly";
 
-        if (!task.done && isRecurring) {
-          return {
-            ...task,
-            dueDate: advanceRecurringDate(task.recurrence, task.recurrenceInterval),
-            done: false,
-          };
-        }
+    if (!taskToComplete.done) {
+      setCompletingTaskIds((prev) => [...prev, id]);
 
-        const nextDone = !task.done;
+      window.setTimeout(() => {
+        setTasks((prev) =>
+          prev.map((task) => {
+            if (task.id !== id) return task;
 
-        if (nextDone) {
+            if (isRecurring) {
+              return {
+                ...task,
+                dueDate: advanceRecurringDate(task.recurrence, task.recurrenceInterval),
+                done: false,
+              };
+            }
+
+            return { ...task, done: true };
+          })
+        );
+
+        setCompletingTaskIds((prev) => prev.filter((taskId) => taskId !== id));
+
+        if (!isRecurring) {
           setLastCompletedTaskId(id);
           setShowCompleted(false);
-        } else if (lastCompletedTaskId === id) {
-          setLastCompletedTaskId(null);
         }
+      }, 420);
 
-        return { ...task, done: nextDone };
-      })
+      return;
+    }
+
+    setTasks((prev) =>
+      prev.map((task) => (task.id === id ? { ...task, done: false } : task))
     );
+
+    if (lastCompletedTaskId === id) {
+      setLastCompletedTaskId(null);
+    }
   }
 
   function undoLastComplete() {
@@ -564,6 +584,13 @@ export default function TodoeyPage() {
       padding: "12px 8px",
       borderBottom: "1px solid #24242a",
       background: "#111114",
+      transition: "opacity 0.28s ease, transform 0.28s ease, box-shadow 0.28s ease, background 0.28s ease",
+    } as React.CSSProperties,
+    completingItemRow: {
+      opacity: 0,
+      transform: "scale(0.985)",
+      background: "#1d1828",
+      boxShadow: "inset 0 0 0 1px #8b5cf6, 0 0 22px rgba(139, 92, 246, 0.45)",
     } as React.CSSProperties,
     checkboxCell: {
       display: "flex",
@@ -812,11 +839,15 @@ export default function TodoeyPage() {
               </div>
             ) : (
               <div style={styles.listWrap}>
-                {visibleTasks.map((task, index) => (
+                {visibleTasks.map((task, index) => {
+                  const isCompleting = completingTaskIds.includes(task.id);
+
+                  return (
                   <div
                     key={task.id}
                     style={{
                       ...styles.itemRow,
+                      ...(isCompleting ? styles.completingItemRow : {}),
                       borderBottom:
                         index === visibleTasks.length - 1 ? "none" : styles.itemRow.borderBottom,
                     }}
@@ -838,7 +869,8 @@ export default function TodoeyPage() {
 
                     <div style={styles.fireCell}>{task.priority === 1 ? "🔥" : ""}</div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
