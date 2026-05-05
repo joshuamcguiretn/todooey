@@ -101,6 +101,7 @@ export default function TodoeyPage() {
     date: formatDateInput(),
     completedTodayCount: 0,
   });
+  const [dailyProgressLoaded, setDailyProgressLoaded] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<string[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -153,10 +154,12 @@ export default function TodoeyPage() {
   }, [tasks]);
 
   useEffect(() => {
+    if (!dailyProgressLoaded) return;
+
     if (typeof window !== "undefined") {
       window.localStorage.setItem(DAILY_PROGRESS_KEY, JSON.stringify(dailyProgress));
     }
-  }, [dailyProgress]);
+  }, [dailyProgress, dailyProgressLoaded]);
 
   useEffect(() => {
     const savedProgress =
@@ -181,6 +184,8 @@ export default function TodoeyPage() {
         setDailyProgress({ date: formatDateInput(), completedTodayCount: 0 });
       }
     }
+
+    setDailyProgressLoaded(true);
   }, []);
 
   useEffect(() => {
