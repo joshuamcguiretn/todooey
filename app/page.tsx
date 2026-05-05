@@ -161,6 +161,21 @@ export default function TodoeyPage() {
     return tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
   }, [tasks]);
 
+  const progressStats = useMemo(() => {
+    const dueOrCompletedTasks = tasks.filter((task) =>
+      task.done || isDueTodayOrOlder(task.dueDate)
+    );
+    const completedCount = dueOrCompletedTasks.filter((task) => task.done).length;
+    const totalCount = dueOrCompletedTasks.length;
+    const percent = totalCount === 0 ? 100 : Math.round((completedCount / totalCount) * 100);
+
+    return {
+      completedCount,
+      totalCount,
+      percent,
+    };
+  }, [tasks]);
+
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
   }, [tasks, editingTaskId]);
@@ -356,6 +371,31 @@ export default function TodoeyPage() {
       fontSize: "22px",
       fontWeight: 800,
       lineHeight: 1.1,
+    } as React.CSSProperties,
+    progressArea: {
+      background: "#c39af1",
+      color: "#101012",
+      padding: "0 14px 10px",
+    } as React.CSSProperties,
+    progressText: {
+      textAlign: "center",
+      fontSize: "13px",
+      fontWeight: 700,
+      opacity: 0.86,
+      marginBottom: "6px",
+    } as React.CSSProperties,
+    progressTrack: {
+      width: "100%",
+      height: "10px",
+      borderRadius: "999px",
+      background: "rgba(16, 16, 18, 0.22)",
+      overflow: "hidden",
+    } as React.CSSProperties,
+    progressFill: {
+      height: "100%",
+      borderRadius: "999px",
+      background: "#101012",
+      transition: "width 0.35s ease",
     } as React.CSSProperties,
     section: {
       padding: "14px 12px 22px",
@@ -728,6 +768,22 @@ export default function TodoeyPage() {
               : activeDueCount === 0
               ? "And We’re Done!"
               : `${activeDueCount} task${activeDueCount === 1 ? "" : "s"} left`}
+          </div>
+
+          <div style={styles.progressArea}>
+            <div style={styles.progressText}>
+              {progressStats.totalCount === 0
+                ? "Nothing due right now"
+                : `${progressStats.completedCount} of ${progressStats.totalCount} done · ${progressStats.percent}%`}
+            </div>
+            <div style={styles.progressTrack}>
+              <div
+                style={{
+                  ...styles.progressFill,
+                  width: `${progressStats.percent}%`,
+                }}
+              />
+            </div>
           </div>
 
           <div style={styles.section}>
