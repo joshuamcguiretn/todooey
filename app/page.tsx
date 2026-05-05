@@ -212,7 +212,9 @@ export default function TodoeyPage() {
     const completedTodayCount = dailyProgress.date === today ? dailyProgress.completedTodayCount : 0;
     const totalTodayCount = activeDueCount + completedTodayCount;
     const percent =
-      totalTodayCount === 0 ? 100 : Math.round((completedTodayCount / totalTodayCount) * 100);
+      totalTodayCount === 0
+        ? 100
+        : Math.round((completedTodayCount / totalTodayCount) * 100);
 
     return {
       completedTodayCount,
@@ -444,7 +446,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     progressTrack: {
       width: "100%",
-      height: "10px",
+      height: "12px",
       borderRadius: "999px",
       background: "rgba(16, 16, 18, 0.22)",
       overflow: "hidden",
@@ -453,7 +455,7 @@ export default function TodoeyPage() {
       height: "100%",
       borderRadius: "999px",
       background: "#101012",
-      transition: "width 0.35s ease",
+      transition: "width 0.5s ease",
     } as React.CSSProperties,
     section: {
       padding: "14px 12px 22px",
@@ -686,7 +688,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     completingItemRow: {
       opacity: 0,
-      transform: "scale(0.985)",
+      transform: "scale(1.02)",
       background: "#1d1828",
       boxShadow: "inset 0 0 0 1px #8b5cf6, 0 0 22px rgba(139, 92, 246, 0.45)",
     } as React.CSSProperties,
@@ -940,7 +942,14 @@ export default function TodoeyPage() {
                     type="number"
                     min={1}
                     value={recurrenceInterval}
-                    onChange={(e) => setRecurrenceInterval(normalizeInterval(e.target.value))}
+                    onChange={(e) => {
+  const val = e.target.value;
+  if (val === "") {
+    setRecurrenceInterval("");
+  } else {
+    setRecurrenceInterval(Number(val));
+  }
+}}
                   />
                   {recurrenceUnit(recurrence, recurrenceInterval)}
                 </div>
@@ -981,7 +990,10 @@ export default function TodoeyPage() {
                       <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
                     </div>
 
-                    <div style={styles.fireCell}>{task.priority === 1 ? "🔥" : ""}</div>
+                    <div style={styles.fireCell}>
+  {task.priority === 1 ? "🔥" : ""}
+  {task.description ? " 📝" : ""}
+</div>
                   </div>
                   );
                 })}
