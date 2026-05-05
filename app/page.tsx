@@ -18,6 +18,12 @@ type Task = {
 };
 
 const STORAGE_KEY = "todoey-v1";
+const DAILY_PROGRESS_KEY = "todoey-daily-progress";
+
+type DailyProgress = {
+  date: string;
+  completedTodayCount: number;
+};
 
 function formatDateInput(date = new Date()) {
   const year = date.getFullYear();
@@ -91,6 +97,10 @@ export default function TodoeyPage() {
   const [newDescription, setNewDescription] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [dailyProgress, setDailyProgress] = useState<DailyProgress>({
+    date: formatDateInput(),
+    completedTodayCount: 0,
+  });
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<string[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -143,6 +153,37 @@ export default function TodoeyPage() {
   }, [tasks]);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DAILY_PROGRESS_KEY, JSON.stringify(dailyProgress));
+    }
+  }, [dailyProgress]);
+
+  useEffect(() => {
+    const savedProgress =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(DAILY_PROGRESS_KEY)
+        : null;
+
+    if (savedProgress) {
+      try {
+        const parsedProgress = JSON.parse(savedProgress) as Partial<DailyProgress>;
+        const today = formatDateInput();
+
+        if (parsedProgress.date === today) {
+          setDailyProgress({
+            date: today,
+            completedTodayCount: Math.max(0, Number(parsedProgress.completedTodayCount ?? 0)),
+          });
+        } else {
+          setDailyProgress({ date: today, completedTodayCount: 0 });
+        }
+      } catch {
+        setDailyProgress({ date: formatDateInput(), completedTodayCount: 0 });
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     taskInputRef.current?.focus();
   }, []);
 
@@ -162,19 +203,18 @@ export default function TodoeyPage() {
   }, [tasks]);
 
   const progressStats = useMemo(() => {
-    const dueOrCompletedTasks = tasks.filter((task) =>
-      task.done || isDueTodayOrOlder(task.dueDate)
-    );
-    const completedCount = dueOrCompletedTasks.filter((task) => task.done).length;
-    const totalCount = dueOrCompletedTasks.length;
-    const percent = totalCount === 0 ? 100 : Math.round((completedCount / totalCount) * 100);
+    const today = formatDateInput();
+    const completedTodayCount = dailyProgress.date === today ? dailyProgress.completedTodayCount : 0;
+    const totalTodayCount = activeDueCount + completedTodayCount;
+    const percent =
+      totalTodayCount === 0 ? 100 : Math.round((completedTodayCount / totalTodayCount) * 100);
 
     return {
-      completedCount,
-      totalCount,
+      completedTodayCount,
+      totalTodayCount,
       percent,
     };
-  }, [tasks]);
+  }, [activeDueCount, dailyProgress]);
 
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
@@ -301,6 +341,15 @@ export default function TodoeyPage() {
 
         setCompletingTaskIds((prev) => prev.filter((taskId) => taskId !== id));
 
+        setDailyProgress((prev) => {
+          const today = formatDateInput();
+          const currentCount = prev.date === today ? prev.completedTodayCount : 0;
+          return {
+            date: today,
+            completedTodayCount: currentCount + 1,
+          };
+        });
+
         if (!isRecurring) {
           setLastCompletedTaskId(id);
           setShowCompleted(false);
@@ -327,6 +376,10 @@ export default function TodoeyPage() {
         task.id === lastCompletedTaskId ? { ...task, done: false } : task
       )
     );
+    setDailyProgress((prev) => ({
+      date: formatDateInput(),
+      completedTodayCount: Math.max(0, prev.completedTodayCount - 1),
+    }));
     setLastCompletedTaskId(null);
 
     window.setTimeout(() => {
@@ -772,9 +825,9 @@ export default function TodoeyPage() {
 
           <div style={styles.progressArea}>
             <div style={styles.progressText}>
-              {progressStats.totalCount === 0
+              {progressStats.totalTodayCount === 0
                 ? "Nothing due right now"
-                : `${progressStats.completedCount} of ${progressStats.totalCount} done · ${progressStats.percent}%`}
+                : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done today · ${progressStats.percent}%`}
             </div>
             <div style={styles.progressTrack}>
               <div
