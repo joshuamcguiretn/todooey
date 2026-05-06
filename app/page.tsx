@@ -65,14 +65,15 @@ function normalizeInterval(value: unknown) {
   return Math.max(1, Math.floor(numberValue));
 }
 
-function recurrenceUnit(recurrence: Recurrence, interval: number) {
+function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
+  const interval = normalizeInterval(intervalInput);
   if (recurrence === "daily") return interval === 1 ? "day" : "days";
   if (recurrence === "weekly") return interval === 1 ? "week" : "weeks";
   if (recurrence === "monthly") return interval === 1 ? "month" : "months";
   return "";
 }
 
-function advanceRecurringDate(recurrence: Recurrence, intervalInput: number) {
+function advanceRecurringDate(recurrence: Recurrence, intervalInput: unknown) {
   const interval = normalizeInterval(intervalInput);
   const next = startOfDay(new Date());
 
@@ -93,7 +94,7 @@ export default function TodoeyPage() {
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
-  const [recurrenceInterval, setRecurrenceInterval] = useState(1);
+  const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
   const [newDescription, setNewDescription] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
@@ -109,7 +110,7 @@ export default function TodoeyPage() {
   const [editDueDate, setEditDueDate] = useState(formatDateInput());
   const [editPriority, setEditPriority] = useState<Priority>(2);
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
-  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
+  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
   const [editDescription, setEditDescription] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
