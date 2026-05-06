@@ -98,6 +98,7 @@ export default function TodoeyPage() {
   const [newDescription, setNewDescription] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [viewMode, setViewMode] = useState<"current" | "future">("current");
   const [dailyProgress, setDailyProgress] = useState<DailyProgress>({
     date: formatDateInput(),
     completedTodayCount: 0,
@@ -194,15 +195,28 @@ export default function TodoeyPage() {
   }, []);
 
   const visibleTasks = useMemo(() => {
-    return tasks
-      .filter((task) => (showCompleted ? task.done : !task.done))
-      .filter((task) => (showCompleted ? true : isDueTodayOrOlder(task.dueDate)))
-      .sort((a, b) => {
-        if (a.priority !== b.priority) return a.priority - b.priority;
-        if (a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-        return a.createdAt.localeCompare(b.createdAt);
-      });
-  }, [tasks, showCompleted]);
+    const sorted = [...tasks].sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return a.priority - b.priority;
+      }
+
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    });
+
+    if (viewMode === "future") {
+      return sorted.filter(
+        (task) => !task.done && !isDueTodayOrOlder(task.dueDate)
+      );
+    }
+
+    if (showCompleted) {
+      return sorted.filter((task) => task.done);
+    }
+
+    return sorted.filter(
+      (task) => !task.done && isDueTodayOrOlder(task.dueDate)
+    );
+  }, [tasks, showCompleted, viewMode]);
 
   const activeDueCount = useMemo(() => {
     return tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
@@ -460,6 +474,26 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     section: {
       padding: "14px 12px 22px",
+    } as React.CSSProperties,
+    viewToggleRow: {
+      display: "flex",
+      gap: "8px",
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    viewToggleButton: {
+      flex: 1,
+      padding: "10px 12px",
+      borderRadius: "12px",
+      border: "1px solid #3a3a40",
+      background: "#151519",
+      color: "#d7d7dc",
+      fontWeight: 700,
+      cursor: "pointer",
+    } as React.CSSProperties,
+    activeViewToggleButton: {
+      background: "#8b5cf6",
+      color: "#ffffff",
+      border: "1px solid #8b5cf6",
     } as React.CSSProperties,
     controlsRow: {
       display: "flex",
@@ -848,6 +882,33 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
+            <div style={styles.viewToggleRow}>
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "current" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("current");
+                  setShowCompleted(false);
+                }}
+              >
+                Current
+              </button>
+
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "future" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("future");
+                  setShowCompleted(false);
+                }}
+              >
+                Future
+              </button>
+            </div>
 
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
