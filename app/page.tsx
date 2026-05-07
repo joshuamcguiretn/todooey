@@ -306,7 +306,7 @@ export default function TodoeyPage() {
   function clearEditState() {
     setEditingTaskId(null);
     setEditTitle("");
-    setEditDueDate(task.dueDate);
+    setEditDueDate(formatDateInput());
     setEditPriority(2);
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
