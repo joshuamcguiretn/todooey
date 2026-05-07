@@ -73,6 +73,15 @@ function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
   return "";
 }
 
+function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
+  if (recurrence === "none") return "One-time task";
+
+  const interval = normalizeInterval(intervalInput);
+  const unit = recurrenceUnit(recurrence, interval);
+
+  return `Every ${interval} ${unit}`;
+}
+
 function advanceRecurringDate(recurrence: Recurrence, intervalInput: unknown) {
   const interval = normalizeInterval(intervalInput);
   const next = startOfDay(new Date());
@@ -98,7 +107,7 @@ export default function TodoeyPage() {
   const [newDescription, setNewDescription] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
-  const [viewMode, setViewMode] = useState<"current" | "future">("current");
+  const [viewMode, setViewMode] = useState<"current" | "future" | "recurring">("current");
   const [dailyProgress, setDailyProgress] = useState<DailyProgress>({
     date: formatDateInput(),
     completedTodayCount: 0,
@@ -206,6 +215,12 @@ export default function TodoeyPage() {
     if (viewMode === "future") {
       return sorted.filter(
         (task) => !task.done && !isDueTodayOrOlder(task.dueDate)
+      );
+    }
+
+    if (viewMode === "recurring") {
+      return sorted.filter(
+        (task) => !task.done && task.recurrence !== "none"
       );
     }
 
@@ -908,6 +923,19 @@ export default function TodoeyPage() {
               >
                 Future
               </button>
+
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "recurring" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("recurring");
+                  setShowCompleted(false);
+                }}
+              >
+                Recurring
+              </button>
             </div>
 
             <div style={styles.mobileControls}>
@@ -1020,7 +1048,13 @@ export default function TodoeyPage() {
 
             {visibleTasks.length === 0 ? (
               <div style={styles.empty}>
-                {showCompleted ? "No completed tasks." : "Nothing showing right now."}
+                {showCompleted
+                  ? "No completed tasks."
+                  : viewMode === "future"
+                  ? "No future tasks."
+                  : viewMode === "recurring"
+                  ? "No recurring tasks."
+                  : "Nothing showing right now."}
               </div>
             ) : (
               <div style={styles.listWrap}>
@@ -1049,7 +1083,11 @@ export default function TodoeyPage() {
 
                     <div style={styles.taskBlock} onClick={() => openEditor(task)}>
                       <div style={styles.taskText}>{task.title}</div>
-                      <div style={styles.dueCell}>{dueText(task.dueDate)}</div>
+                      <div style={styles.dueCell}>
+                        {viewMode === "recurring"
+                          ? `${recurrenceSummary(task.recurrence, task.recurrenceInterval)} · Next: ${dueText(task.dueDate)}`
+                          : dueText(task.dueDate)}
+                      </div>
                     </div>
 
                     <div style={styles.fireCell}>
