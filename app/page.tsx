@@ -287,7 +287,9 @@ export default function TodoeyPage() {
     resetNewTaskInputs();
 
     window.setTimeout(() => {
-      taskInputRef.current?.focus();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
     }, 0);
   }
 
@@ -304,7 +306,7 @@ export default function TodoeyPage() {
   function clearEditState() {
     setEditingTaskId(null);
     setEditTitle("");
-    setEditDueDate(formatDateInput());
+    setEditDueDate(task.dueDate);
     setEditPriority(2);
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
@@ -881,11 +883,6 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.progressArea}>
-            <div style={styles.progressText}>
-              {progressStats.totalTodayCount === 0
-                ? "Nothing due right now"
-                : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done today · ${progressStats.percent}%`}
-            </div>
             <div style={styles.progressTrack}>
               <div
                 style={{
@@ -893,6 +890,11 @@ export default function TodoeyPage() {
                   width: `${progressStats.percent}%`,
                 }}
               />
+            </div>
+            <div style={styles.progressText}>
+              {progressStats.totalTodayCount === 0
+                ? "Nothing due right now"
+                : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done`}
             </div>
           </div>
 
@@ -1091,8 +1093,10 @@ export default function TodoeyPage() {
                     </div>
 
                     <div style={styles.fireCell}>
-  {task.priority === 1 ? "🔥" : ""}
-  {task.description ? " 📝" : ""}
+  <span style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+    {task.priority === 1 ? <span>🔥</span> : null}
+    {task.description ? <span>📝</span> : null}
+  </span>
 </div>
                   </div>
                   );
