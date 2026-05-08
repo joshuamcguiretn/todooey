@@ -730,7 +730,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     itemRow: {
       display: "grid",
-      gridTemplateColumns: "28px 1fr 24px",
+      gridTemplateColumns: "28px 1fr 56px",
       gap: "8px",
       alignItems: "start",
       padding: "12px 8px",
@@ -787,6 +787,12 @@ export default function TodoeyPage() {
       lineHeight: 1,
       paddingTop: "2px",
       textAlign: "right",
+      display: "flex",
+      justifyContent: "flex-end",
+      alignItems: "flex-start",
+      gap: "4px",
+      whiteSpace: "nowrap",
+      overflow: "visible",
     } as React.CSSProperties,
     empty: {
       background: "#111114",
@@ -1093,11 +1099,9 @@ export default function TodoeyPage() {
                     </div>
 
                     <div style={styles.fireCell}>
-  <span style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-    {task.priority === 1 ? <span>🔥</span> : null}
-    {task.description ? <span>📝</span> : null}
-  </span>
-</div>
+                      {task.priority === 1 ? <span>🔥</span> : null}
+                      {task.description ? <span>📝</span> : null}
+                    </div>
                   </div>
                   );
                 })}
