@@ -158,6 +158,7 @@ export default function TodoeyPage() {
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
+  const [fullScreenImage, setFullScreenImage] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -917,6 +918,22 @@ export default function TodoeyPage() {
       justifyContent: "center",
       padding: "12px",
     } as React.CSSProperties,
+    fullScreenImageOverlay: {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0, 0, 0, 0.92)",
+      zIndex: 80,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "14px",
+    } as React.CSSProperties,
+    fullScreenImage: {
+      maxWidth: "100%",
+      maxHeight: "100%",
+      objectFit: "contain",
+      borderRadius: "12px",
+    } as React.CSSProperties,
     modal: {
       width: "100%",
       maxWidth: "560px",
@@ -1051,7 +1068,7 @@ export default function TodoeyPage() {
 
                 <div style={styles.imageButtonRow}>
                   <label style={styles.imageActionButton}>
-                    Add image
+                    {newImageDataUrl ? "Change image" : "Add image"}
                     <input
                       style={styles.hiddenFileInput}
                       type="file"
@@ -1076,11 +1093,16 @@ export default function TodoeyPage() {
                 </div>
 
                 {newImageDataUrl ? (
-                  <img
-                    style={styles.imagePreview}
-                    src={newImageDataUrl}
-                    alt="Task attachment preview"
-                  />
+                  <button
+                    style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
+                    onClick={() => setFullScreenImage(newImageDataUrl)}
+                  >
+                    <img
+                      style={styles.imagePreview}
+                      src={newImageDataUrl}
+                      alt="Task attachment preview"
+                    />
+                  </button>
                 ) : null}
               </div>
             ) : null}
@@ -1265,6 +1287,16 @@ export default function TodoeyPage() {
         </button>
       </div>
 
+      {fullScreenImage ? (
+        <div style={styles.fullScreenImageOverlay} onClick={() => setFullScreenImage("")}>
+          <img
+            style={styles.fullScreenImage}
+            src={fullScreenImage}
+            alt="Full size task attachment"
+          />
+        </div>
+      ) : null}
+
       {editingTask ? (
         <div style={styles.modalOverlay} onClick={closeEditor}>
           <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -1352,7 +1384,7 @@ export default function TodoeyPage() {
 
               <div style={styles.imageButtonRow}>
                 <label style={styles.imageActionButton}>
-                  Add image
+                  {newImageDataUrl ? "Change image" : "Add image"}
                   <input
                     style={styles.hiddenFileInput}
                     type="file"
@@ -1377,11 +1409,16 @@ export default function TodoeyPage() {
               </div>
 
               {editImageDataUrl ? (
-                <img
-                  style={styles.imagePreview}
-                  src={editImageDataUrl}
-                  alt="Task attachment preview"
-                />
+                <button
+                  style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
+                  onClick={() => setFullScreenImage(editImageDataUrl)}
+                >
+                  <img
+                    style={styles.imagePreview}
+                    src={editImageDataUrl}
+                    alt="Task attachment preview"
+                  />
+                </button>
               ) : null}
             </div>
 
