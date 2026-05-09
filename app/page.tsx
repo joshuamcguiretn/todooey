@@ -203,6 +203,22 @@ export default function TodoeyPage() {
     taskInputRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    if (!editingTaskId) return;
+
+    const closeModalOnBack = () => {
+      clearEditState();
+      window.history.pushState(null, "", window.location.href);
+    };
+
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", closeModalOnBack);
+
+    return () => {
+      window.removeEventListener("popstate", closeModalOnBack);
+    };
+  }, [editingTaskId]);
+
   const visibleTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => {
       if (a.priority !== b.priority) {
@@ -315,8 +331,11 @@ export default function TodoeyPage() {
 
   function closeEditor() {
     clearEditState();
+
     window.setTimeout(() => {
-      taskInputRef.current?.focus();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
     }, 0);
   }
 
