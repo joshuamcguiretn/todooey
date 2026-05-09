@@ -1,5 +1,3 @@
-https://www.walmart.com/ip/Kingart-Pro-Twin-Tip-Brush-Pens-24-Pieces/680205576?filters=%5B%7B%22intent%22%3A%22fulfillmentIntent%22%2C%22values%22%3A%5B%22In-store%22%5D%7D%5D"use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Priority = 1 | 2;
