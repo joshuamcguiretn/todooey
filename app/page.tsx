@@ -509,12 +509,28 @@ export default function TodoeyPage() {
       transition: "width 0.5s ease",
     } as React.CSSProperties,
     section: {
-      padding: "14px 12px 22px",
+      padding: "14px 12px 96px",
     } as React.CSSProperties,
     viewToggleRow: {
       display: "flex",
       gap: "8px",
       marginBottom: "12px",
+    } as React.CSSProperties,
+    bottomNav: {
+      position: "fixed",
+      left: "10px",
+      right: "10px",
+      bottom: "10px",
+      zIndex: 40,
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr 1fr",
+      gap: "8px",
+      padding: "8px",
+      borderRadius: "18px",
+      border: "1px solid #2f2f35",
+      background: "rgba(17, 17, 20, 0.96)",
+      boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
+      backdropFilter: "blur(10px)",
     } as React.CSSProperties,
     viewToggleButton: {
       flex: 1,
@@ -924,47 +940,6 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.viewToggleRow}>
-              <button
-                style={{
-                  ...styles.viewToggleButton,
-                  ...(viewMode === "current" ? styles.activeViewToggleButton : {}),
-                }}
-                onClick={() => {
-                  setViewMode("current");
-                  setShowCompleted(false);
-                }}
-              >
-                Current
-              </button>
-
-              <button
-                style={{
-                  ...styles.viewToggleButton,
-                  ...(viewMode === "future" ? styles.activeViewToggleButton : {}),
-                }}
-                onClick={() => {
-                  setViewMode("future");
-                  setShowCompleted(false);
-                }}
-              >
-                Future
-              </button>
-
-              <button
-                style={{
-                  ...styles.viewToggleButton,
-                  ...(viewMode === "recurring" ? styles.activeViewToggleButton : {}),
-                }}
-                onClick={() => {
-                  setViewMode("recurring");
-                  setShowCompleted(false);
-                }}
-              >
-                Recurring
-              </button>
-            </div>
-
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
                 <input
@@ -1143,6 +1118,47 @@ export default function TodoeyPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div style={styles.bottomNav}>
+        <button
+          style={{
+            ...styles.viewToggleButton,
+            ...(viewMode === "current" ? styles.activeViewToggleButton : {}),
+          }}
+          onClick={() => {
+            setViewMode("current");
+            setShowCompleted(false);
+          }}
+        >
+          Current
+        </button>
+
+        <button
+          style={{
+            ...styles.viewToggleButton,
+            ...(viewMode === "future" ? styles.activeViewToggleButton : {}),
+          }}
+          onClick={() => {
+            setViewMode("future");
+            setShowCompleted(false);
+          }}
+        >
+          Future
+        </button>
+
+        <button
+          style={{
+            ...styles.viewToggleButton,
+            ...(viewMode === "recurring" ? styles.activeViewToggleButton : {}),
+          }}
+          onClick={() => {
+            setViewMode("recurring");
+            setShowCompleted(false);
+          }}
+        >
+          Recurring
+        </button>
       </div>
 
       {editingTask ? (
