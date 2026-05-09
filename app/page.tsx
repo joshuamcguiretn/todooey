@@ -1,4 +1,4 @@
-"use client";
+https://www.walmart.com/ip/Kingart-Pro-Twin-Tip-Brush-Pens-24-Pieces/680205576?filters=%5B%7B%22intent%22%3A%22fulfillmentIntent%22%2C%22values%22%3A%5B%22In-store%22%5D%7D%5D"use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,6 +13,7 @@ type Task = {
   recurrence: Recurrence;
   recurrenceInterval: number;
   description: string;
+  imageDataUrl: string;
   done: boolean;
   createdAt: string;
 };
@@ -97,6 +98,39 @@ function advanceRecurringDate(recurrence: Recurrence, intervalInput: unknown) {
   return formatDateInput(next);
 }
 
+function compressImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const img = new Image();
+
+      img.onload = () => {
+        const maxSize = 1200;
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Could not compress image."));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+
+      img.onerror = () => reject(new Error("Could not load image."));
+      img.src = String(reader.result);
+    };
+
+    reader.onerror = () => reject(new Error("Could not read image."));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function TodoeyPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
@@ -105,6 +139,7 @@ export default function TodoeyPage() {
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
   const [newDescription, setNewDescription] = useState("");
+  const [newImageDataUrl, setNewImageDataUrl] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [viewMode, setViewMode] = useState<"current" | "future" | "recurring">("current");
@@ -122,6 +157,7 @@ export default function TodoeyPage() {
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
   const [editDescription, setEditDescription] = useState("");
+  const [editImageDataUrl, setEditImageDataUrl] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -147,6 +183,7 @@ export default function TodoeyPage() {
               : "none",
           recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
           description: task.description ?? "",
+          imageDataUrl: task.imageDataUrl ?? "",
           done: Boolean(task.done),
           createdAt: task.createdAt ?? new Date().toISOString(),
         }));
@@ -280,6 +317,7 @@ export default function TodoeyPage() {
     setRecurrence("none");
     setRecurrenceInterval(1);
     setNewDescription("");
+    setNewImageDataUrl("");
     setShowNewDescription(false);
   }
 
@@ -295,6 +333,7 @@ export default function TodoeyPage() {
       recurrence,
       recurrenceInterval: normalizeInterval(recurrenceInterval),
       description: newDescription.trim(),
+      imageDataUrl: newImageDataUrl,
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -317,6 +356,7 @@ export default function TodoeyPage() {
     setEditRecurrence(task.recurrence);
     setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
     setEditDescription(task.description ?? "");
+    setEditImageDataUrl(task.imageDataUrl ?? "");
   }
 
   function clearEditState() {
@@ -327,6 +367,7 @@ export default function TodoeyPage() {
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
     setEditDescription("");
+    setEditImageDataUrl("");
   }
 
   function closeEditor() {
@@ -355,6 +396,7 @@ export default function TodoeyPage() {
               recurrence: editRecurrence,
               recurrenceInterval: normalizeInterval(editRecurrenceInterval),
               description: editDescription.trim(),
+              imageDataUrl: editImageDataUrl,
             }
           : task
       )
@@ -690,6 +732,33 @@ export default function TodoeyPage() {
     newDescriptionBox: {
       marginBottom: "16px",
     } as React.CSSProperties,
+    imagePreview: {
+      width: "100%",
+      maxHeight: "220px",
+      objectFit: "cover",
+      borderRadius: "14px",
+      border: "1px solid #3f3f48",
+      marginTop: "10px",
+    } as React.CSSProperties,
+    imageButtonRow: {
+      display: "flex",
+      gap: "10px",
+      flexWrap: "wrap",
+      marginTop: "10px",
+    } as React.CSSProperties,
+    imageActionButton: {
+      padding: "10px 12px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#ffffff",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: "14px",
+    } as React.CSSProperties,
+    hiddenFileInput: {
+      display: "none",
+    } as React.CSSProperties,
     toggleIconButton: {
       width: "48px",
       height: "48px",
@@ -979,6 +1048,40 @@ export default function TodoeyPage() {
                   onChange={(e) => setNewDescription(e.target.value)}
                   placeholder="Add extra details if needed"
                 />
+
+                <div style={styles.imageButtonRow}>
+                  <label style={styles.imageActionButton}>
+                    Add image
+                    <input
+                      style={styles.hiddenFileInput}
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const compressed = await compressImage(file);
+                        setNewImageDataUrl(compressed);
+                      }}
+                    />
+                  </label>
+
+                  {newImageDataUrl ? (
+                    <button
+                      style={styles.imageActionButton}
+                      onClick={() => setNewImageDataUrl("")}
+                    >
+                      Remove image
+                    </button>
+                  ) : null}
+                </div>
+
+                {newImageDataUrl ? (
+                  <img
+                    style={styles.imagePreview}
+                    src={newImageDataUrl}
+                    alt="Task attachment preview"
+                  />
+                ) : null}
               </div>
             ) : null}
 
@@ -1095,6 +1198,7 @@ export default function TodoeyPage() {
                     <div style={styles.fireCell}>
                       {task.priority === 1 ? <span>🔥</span> : null}
                       {task.description ? <span>📝</span> : null}
+                      {task.imageDataUrl ? <span>📷</span> : null}
                     </div>
                   </div>
                   );
@@ -1245,6 +1349,40 @@ export default function TodoeyPage() {
                 onChange={(e) => setEditDescription(e.target.value)}
                 placeholder="Add extra details if needed"
               />
+
+              <div style={styles.imageButtonRow}>
+                <label style={styles.imageActionButton}>
+                  Add image
+                  <input
+                    style={styles.hiddenFileInput}
+                    type="file"
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const compressed = await compressImage(file);
+                      setEditImageDataUrl(compressed);
+                    }}
+                  />
+                </label>
+
+                {editImageDataUrl ? (
+                  <button
+                    style={styles.imageActionButton}
+                    onClick={() => setEditImageDataUrl("")}
+                  >
+                    Remove image
+                  </button>
+                ) : null}
+              </div>
+
+              {editImageDataUrl ? (
+                <img
+                  style={styles.imagePreview}
+                  src={editImageDataUrl}
+                  alt="Task attachment preview"
+                />
+              ) : null}
             </div>
 
             <div style={styles.modalActions}>
