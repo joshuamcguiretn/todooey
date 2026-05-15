@@ -60,6 +60,27 @@ function dueText(dueDate: string) {
   return `In ${Math.abs(diffDays)} days`;
 }
 
+function upcomingWorkload(tasks: Task[]) {
+  const today = startOfDay(new Date());
+  const counts: { label: string; count: number }[] = [];
+
+  for (let i = 1; i <= 5; i++) {
+    const future = new Date(today);
+    future.setDate(future.getDate() + i);
+
+    const key = formatDateInput(future);
+
+    counts.push({
+      label: i === 1 ? "Tomorrow" : `${i}d`,
+      count: tasks.filter(
+        (task) => !task.done && task.dueDate === key
+      ).length,
+    });
+  }
+
+  return counts;
+}
+
 function normalizeInterval(value: unknown) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return 1;
@@ -242,20 +263,28 @@ export default function TodoeyPage() {
   }, []);
 
   useEffect(() => {
-    if (!editingTaskId) return;
+    if (!editingTaskId && !fullScreenImage) return;
 
-    const closeModalOnBack = () => {
-      clearEditState();
-      window.history.pushState(null, "", window.location.href);
+    const handleBackButton = () => {
+      if (fullScreenImage) {
+        setFullScreenImage("");
+        window.history.pushState(null, "", window.location.href);
+        return;
+      }
+
+      if (editingTaskId) {
+        clearEditState();
+        window.history.pushState(null, "", window.location.href);
+      }
     };
 
     window.history.pushState(null, "", window.location.href);
-    window.addEventListener("popstate", closeModalOnBack);
+    window.addEventListener("popstate", handleBackButton);
 
     return () => {
-      window.removeEventListener("popstate", closeModalOnBack);
+      window.removeEventListener("popstate", handleBackButton);
     };
-  }, [editingTaskId]);
+  }, [editingTaskId, fullScreenImage]);
 
   const visibleTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => {
@@ -306,6 +335,10 @@ export default function TodoeyPage() {
       percent,
     };
   }, [activeDueCount, dailyProgress]);
+
+  const workloadForecast = useMemo(() => {
+    return upcomingWorkload(tasks);
+  }, [tasks]);
 
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
@@ -530,6 +563,31 @@ export default function TodoeyPage() {
       background: "#c39af1",
       color: "#101012",
       padding: "0 14px 10px",
+    } as React.CSSProperties,
+    workloadForecast: {
+      display: "flex",
+      gap: "8px",
+      overflowX: "auto",
+      paddingTop: "10px",
+      paddingBottom: "2px",
+    } as React.CSSProperties,
+    workloadDay: {
+      minWidth: "58px",
+      borderRadius: "12px",
+      padding: "8px 6px",
+      background: "rgba(16,16,18,0.18)",
+      border: "1px solid rgba(16,16,18,0.14)",
+      textAlign: "center",
+    } as React.CSSProperties,
+    workloadLabel: {
+      fontSize: "11px",
+      fontWeight: 700,
+      opacity: 0.72,
+      marginBottom: "4px",
+    } as React.CSSProperties,
+    workloadCount: {
+      fontSize: "18px",
+      fontWeight: 800,
     } as React.CSSProperties,
     progressText: {
       textAlign: "center",
@@ -1023,6 +1081,15 @@ export default function TodoeyPage() {
                 ? "Nothing due right now"
                 : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done`}
             </div>
+
+            <div style={styles.workloadForecast}>
+              {workloadForecast.map((day) => (
+                <div key={day.label} style={styles.workloadDay}>
+                  <div style={styles.workloadLabel}>{day.label}</div>
+                  <div style={styles.workloadCount}>{day.count}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div style={styles.section}>
@@ -1384,7 +1451,7 @@ export default function TodoeyPage() {
 
               <div style={styles.imageButtonRow}>
                 <label style={styles.imageActionButton}>
-                  {newImageDataUrl ? "Change image" : "Add image"}
+                  {editImageDataUrl ? "Change image" : "Add image"}
                   <input
                     style={styles.hiddenFileInput}
                     type="file"
