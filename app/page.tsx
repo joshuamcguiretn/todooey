@@ -12,6 +12,8 @@ type Task = {
   priority: Priority;
   recurrence: Recurrence;
   recurrenceInterval: number;
+  rotationTitles: string[];
+  rotationTitleIndex: number;
   description: string;
   imageDataUrl: string;
   done: boolean;
@@ -87,6 +89,31 @@ function normalizeInterval(value: unknown) {
   return Math.max(1, Math.floor(numberValue));
 }
 
+function normalizeRotationTitles(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+  }
+
+  return String(value ?? "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeRotationIndex(value: unknown, titles: string[], currentTitle: string) {
+  if (titles.length === 0) return 0;
+
+  const numberValue = Number(value);
+  if (Number.isFinite(numberValue) && numberValue >= 0) {
+    return Math.floor(numberValue) % titles.length;
+  }
+
+  const currentIndex = titles.findIndex((title) => title === currentTitle);
+  return currentIndex >= 0 ? currentIndex : 0;
+}
+
 function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
   const interval = normalizeInterval(intervalInput);
   if (recurrence === "daily") return interval === 1 ? "day" : "days";
@@ -154,11 +181,13 @@ function compressImage(file: File): Promise<string> {
 
 export default function TodoeyPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
+  const [rotationText, setRotationText] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newImageDataUrl, setNewImageDataUrl] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
@@ -177,10 +206,23 @@ export default function TodoeyPage() {
   const [editPriority, setEditPriority] = useState<Priority>(2);
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
+  const [editRotationText, setEditRotationText] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
   const [fullScreenImage, setFullScreenImage] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
+
+  const clearEditState = React.useCallback(() => {
+    setEditingTaskId(null);
+    setEditTitle("");
+    setEditDueDate(formatDateInput());
+    setEditPriority(2);
+    setEditRecurrence("none");
+    setEditRecurrenceInterval(1);
+    setEditRotationText("");
+    setEditDescription("");
+    setEditImageDataUrl("");
+  }, []);
 
   useEffect(() => {
     const saved =
@@ -192,36 +234,59 @@ export default function TodoeyPage() {
       try {
         const parsed = JSON.parse(saved) as Partial<Task>[];
 
-        const normalized: Task[] = parsed.map((task) => ({
-          id: task.id ?? generateId(),
-          title: task.title ?? "",
-          dueDate: task.dueDate ?? formatDateInput(),
-          priority: task.priority === 1 ? 1 : 2,
-          recurrence:
-            task.recurrence === "daily" ||
-            task.recurrence === "weekly" ||
-            task.recurrence === "monthly"
-              ? task.recurrence
-              : "none",
-          recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
-          description: task.description ?? "",
-          imageDataUrl: task.imageDataUrl ?? "",
-          done: Boolean(task.done),
-          createdAt: task.createdAt ?? new Date().toISOString(),
-        }));
+        const normalized: Task[] = parsed.map((task) => {
+          const title = task.title ?? "";
+          const rotationTitles = normalizeRotationTitles(
+            (task as Partial<Task>).rotationTitles
+          );
 
-        setTasks(normalized);
+          return {
+            id: task.id ?? generateId(),
+            title,
+            dueDate: task.dueDate ?? formatDateInput(),
+            priority: task.priority === 1 ? 1 : 2,
+            recurrence:
+              task.recurrence === "daily" ||
+              task.recurrence === "weekly" ||
+              task.recurrence === "monthly"
+                ? task.recurrence
+                : "none",
+            recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
+            rotationTitles,
+            rotationTitleIndex: normalizeRotationIndex(
+              (task as Partial<Task>).rotationTitleIndex,
+              rotationTitles,
+              title
+            ),
+            description: task.description ?? "",
+            imageDataUrl: task.imageDataUrl ?? "",
+            done: Boolean(task.done),
+            createdAt: task.createdAt ?? new Date().toISOString(),
+          };
+        });
+
+        window.setTimeout(() => {
+          setTasks(normalized);
+          setTasksLoaded(true);
+        }, 0);
       } catch {
-        setTasks([]);
+        window.setTimeout(() => {
+          setTasks([]);
+          setTasksLoaded(true);
+        }, 0);
       }
+    } else {
+      window.setTimeout(() => setTasksLoaded(true), 0);
     }
   }, []);
 
   useEffect(() => {
+    if (!tasksLoaded) return;
+
     if (typeof window !== "undefined") {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
     }
-  }, [tasks]);
+  }, [tasks, tasksLoaded]);
 
   useEffect(() => {
     if (!dailyProgressLoaded) return;
@@ -243,19 +308,28 @@ export default function TodoeyPage() {
         const today = formatDateInput();
 
         if (parsedProgress.date === today) {
-          setDailyProgress({
-            date: today,
-            completedTodayCount: Math.max(0, Number(parsedProgress.completedTodayCount ?? 0)),
-          });
+          window.setTimeout(() => {
+            setDailyProgress({
+              date: today,
+              completedTodayCount: Math.max(0, Number(parsedProgress.completedTodayCount ?? 0)),
+            });
+            setDailyProgressLoaded(true);
+          }, 0);
         } else {
-          setDailyProgress({ date: today, completedTodayCount: 0 });
+          window.setTimeout(() => {
+            setDailyProgress({ date: today, completedTodayCount: 0 });
+            setDailyProgressLoaded(true);
+          }, 0);
         }
       } catch {
-        setDailyProgress({ date: formatDateInput(), completedTodayCount: 0 });
+        window.setTimeout(() => {
+          setDailyProgress({ date: formatDateInput(), completedTodayCount: 0 });
+          setDailyProgressLoaded(true);
+        }, 0);
       }
+    } else {
+      window.setTimeout(() => setDailyProgressLoaded(true), 0);
     }
-
-    setDailyProgressLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -284,7 +358,7 @@ export default function TodoeyPage() {
     return () => {
       window.removeEventListener("popstate", handleBackButton);
     };
-  }, [editingTaskId, fullScreenImage]);
+  }, [clearEditState, editingTaskId, fullScreenImage]);
 
   const visibleTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => {
@@ -350,13 +424,15 @@ export default function TodoeyPage() {
     setPriority(2);
     setRecurrence("none");
     setRecurrenceInterval(1);
+    setRotationText("");
     setNewDescription("");
     setNewImageDataUrl("");
     setShowNewDescription(false);
   }
 
   function addTask() {
-    const cleaned = title.trim();
+    const rotationTitles = recurrence === "none" ? [] : normalizeRotationTitles(rotationText);
+    const cleaned = rotationTitles[0] ?? title.trim();
     if (!cleaned) return;
 
     const newTask: Task = {
@@ -366,6 +442,8 @@ export default function TodoeyPage() {
       priority,
       recurrence,
       recurrenceInterval: normalizeInterval(recurrenceInterval),
+      rotationTitles,
+      rotationTitleIndex: 0,
       description: newDescription.trim(),
       imageDataUrl: newImageDataUrl,
       done: false,
@@ -385,23 +463,13 @@ export default function TodoeyPage() {
   function openEditor(task: Task) {
     setEditingTaskId(task.id);
     setEditTitle(task.title);
-    setEditDueDate(formatDateInput());
+    setEditDueDate(task.dueDate);
     setEditPriority(task.priority);
     setEditRecurrence(task.recurrence);
     setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
+    setEditRotationText((task.rotationTitles ?? []).join("\n"));
     setEditDescription(task.description ?? "");
     setEditImageDataUrl(task.imageDataUrl ?? "");
-  }
-
-  function clearEditState() {
-    setEditingTaskId(null);
-    setEditTitle("");
-    setEditDueDate(formatDateInput());
-    setEditPriority(2);
-    setEditRecurrence("none");
-    setEditRecurrenceInterval(1);
-    setEditDescription("");
-    setEditImageDataUrl("");
   }
 
   function closeEditor() {
@@ -419,19 +487,32 @@ export default function TodoeyPage() {
     const taskIdToSave = editingTaskId;
     if (!taskIdToSave || !cleaned) return;
 
+    const rotationTitles =
+      editRecurrence === "none" ? [] : normalizeRotationTitles(editRotationText);
+
     setTasks((prev) =>
       prev.map((task) =>
         task.id === taskIdToSave
-          ? {
-              ...task,
-              title: cleaned,
-              dueDate: editDueDate,
-              priority: editPriority,
-              recurrence: editRecurrence,
-              recurrenceInterval: normalizeInterval(editRecurrenceInterval),
-              description: editDescription.trim(),
-              imageDataUrl: editImageDataUrl,
-            }
+          ? (() => {
+              const rotationTitleIndex = normalizeRotationIndex(
+                task.rotationTitleIndex,
+                rotationTitles,
+                cleaned
+              );
+
+              return {
+                ...task,
+                title: rotationTitles[rotationTitleIndex] ?? cleaned,
+                dueDate: editDueDate,
+                priority: editPriority,
+                recurrence: editRecurrence,
+                recurrenceInterval: normalizeInterval(editRecurrenceInterval),
+                rotationTitles,
+                rotationTitleIndex,
+                description: editDescription.trim(),
+                imageDataUrl: editImageDataUrl,
+              };
+            })()
           : task
       )
     );
@@ -462,9 +543,24 @@ export default function TodoeyPage() {
             if (task.id !== id) return task;
 
             if (isRecurring) {
+              const rotationTitles = normalizeRotationTitles(task.rotationTitles);
+              const nextRotationTitleIndex =
+                rotationTitles.length > 0
+                  ? (normalizeRotationIndex(
+                      task.rotationTitleIndex,
+                      rotationTitles,
+                      task.title
+                    ) +
+                      1) %
+                    rotationTitles.length
+                  : 0;
+
               return {
                 ...task,
+                title: rotationTitles[nextRotationTitleIndex] ?? task.title,
                 dueDate: advanceRecurringDate(task.recurrence, task.recurrenceInterval),
+                rotationTitles,
+                rotationTitleIndex: nextRotationTitleIndex,
                 done: false,
               };
             }
@@ -1200,44 +1296,56 @@ export default function TodoeyPage() {
             </div>
 
             {recurrence !== "none" ? (
-              <div style={styles.recurrenceRow}>
-                <button
-                  style={recurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setRecurrence("daily")}
-                >
-                  Daily
-                </button>
-                <button
-                  style={recurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setRecurrence("weekly")}
-                >
-                  Weekly
-                </button>
-                <button
-                  style={recurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setRecurrence("monthly")}
-                >
-                  Monthly
-                </button>
-                <div style={styles.intervalControl}>
-                  Every
-                  <input
-                    style={styles.intervalInput}
-                    type="number"
-                    min={1}
-                    value={recurrenceInterval}
-                    onChange={(e) => {
-  const val = e.target.value;
-  if (val === "") {
-    setRecurrenceInterval("");
-  } else {
-    setRecurrenceInterval(Number(val));
-  }
-}}
-                  />
-                  {recurrenceUnit(recurrence, recurrenceInterval)}
+              <>
+                <div style={styles.recurrenceRow}>
+                  <button
+                    style={recurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setRecurrence("daily")}
+                  >
+                    Daily
+                  </button>
+                  <button
+                    style={recurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setRecurrence("weekly")}
+                  >
+                    Weekly
+                  </button>
+                  <button
+                    style={recurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setRecurrence("monthly")}
+                  >
+                    Monthly
+                  </button>
+                  <div style={styles.intervalControl}>
+                    Every
+                    <input
+                      style={styles.intervalInput}
+                      type="number"
+                      min={1}
+                      value={recurrenceInterval}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "") {
+                          setRecurrenceInterval("");
+                        } else {
+                          setRecurrenceInterval(Number(val));
+                        }
+                      }}
+                    />
+                    {recurrenceUnit(recurrence, recurrenceInterval)}
+                  </div>
                 </div>
-              </div>
+
+                <div style={styles.fieldGroup}>
+                  <label style={styles.fieldLabel}>Rotating task names</label>
+                  <textarea
+                    style={styles.textArea}
+                    value={rotationText}
+                    onChange={(e) => setRotationText(e.target.value)}
+                    placeholder={"Clean bathroom\nClean kitchen"}
+                  />
+                </div>
+              </>
             ) : null}
 
             {visibleTasks.length === 0 ? (
@@ -1407,37 +1515,49 @@ export default function TodoeyPage() {
             </div>
 
             {editRecurrence !== "none" ? (
-              <div style={styles.recurrenceRow}>
-                <button
-                  style={editRecurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setEditRecurrence("daily")}
-                >
-                  Daily
-                </button>
-                <button
-                  style={editRecurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setEditRecurrence("weekly")}
-                >
-                  Weekly
-                </button>
-                <button
-                  style={editRecurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                  onClick={() => setEditRecurrence("monthly")}
-                >
-                  Monthly
-                </button>
-                <div style={styles.intervalControl}>
-                  Every
-                  <input
-                    style={styles.intervalInput}
-                    type="number"
-                    min={1}
-                    value={editRecurrenceInterval}
-                    onChange={(e) => setEditRecurrenceInterval(normalizeInterval(e.target.value))}
-                  />
-                  {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
+              <>
+                <div style={styles.recurrenceRow}>
+                  <button
+                    style={editRecurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setEditRecurrence("daily")}
+                  >
+                    Daily
+                  </button>
+                  <button
+                    style={editRecurrence === "weekly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setEditRecurrence("weekly")}
+                  >
+                    Weekly
+                  </button>
+                  <button
+                    style={editRecurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => setEditRecurrence("monthly")}
+                  >
+                    Monthly
+                  </button>
+                  <div style={styles.intervalControl}>
+                    Every
+                    <input
+                      style={styles.intervalInput}
+                      type="number"
+                      min={1}
+                      value={editRecurrenceInterval}
+                      onChange={(e) => setEditRecurrenceInterval(normalizeInterval(e.target.value))}
+                    />
+                    {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
+                  </div>
                 </div>
-              </div>
+
+                <div style={styles.fieldGroup}>
+                  <label style={styles.fieldLabel}>Rotating task names</label>
+                  <textarea
+                    style={styles.textArea}
+                    value={editRotationText}
+                    onChange={(e) => setEditRotationText(e.target.value)}
+                    placeholder={"Clean bathroom\nClean kitchen"}
+                  />
+                </div>
+              </>
             ) : null}
 
             <div style={styles.fieldGroup}>
