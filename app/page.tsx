@@ -836,6 +836,11 @@ export default function TodoeyPage() {
       justifyContent: "center",
       transition: "all 0.15s ease",
     } as React.CSSProperties,
+    cameraIcon: {
+      display: "block",
+      lineHeight: 1,
+      transform: "translateY(-1px)",
+    } as React.CSSProperties,
     recurrenceRow: {
       display: "flex",
       gap: "8px",
@@ -1297,7 +1302,7 @@ export default function TodoeyPage() {
                 aria-label={newImageDataUrl ? "Change image" : "Add image"}
                 title={newImageDataUrl ? "Change image" : "Add image"}
               >
-                📷
+                <span style={styles.cameraIcon}>📷</span>
                 <input
                   style={styles.hiddenFileInput}
                   type="file"
