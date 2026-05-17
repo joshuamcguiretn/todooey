@@ -1514,6 +1514,7 @@ export default function TodoeyPage() {
         <div style={styles.modalOverlay} onClick={closeEditor}>
           <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
             <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>Task</label>
               <input
                 style={styles.input}
                 value={editTitle}
@@ -1577,7 +1578,14 @@ export default function TodoeyPage() {
                       type="number"
                       min={1}
                       value={editRecurrenceInterval}
-                      onChange={(e) => setEditRecurrenceInterval(normalizeInterval(e.target.value))}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "") {
+                          setEditRecurrenceInterval("");
+                        } else {
+                          setEditRecurrenceInterval(Number(val));
+                        }
+                      }}
                     />
                     {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
                   </div>
