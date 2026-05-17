@@ -342,17 +342,14 @@ export default function TodoeyPage() {
     const handleBackButton = () => {
       if (fullScreenImage) {
         setFullScreenImage("");
-        window.history.pushState(null, "", window.location.href);
         return;
       }
 
       if (editingTaskId) {
         clearEditState();
-        window.history.pushState(null, "", window.location.href);
       }
     };
 
-    window.history.pushState(null, "", window.location.href);
     window.addEventListener("popstate", handleBackButton);
 
     return () => {
@@ -461,6 +458,10 @@ export default function TodoeyPage() {
   }
 
   function openEditor(task: Task) {
+    if (!editingTaskId && typeof window !== "undefined") {
+      window.history.pushState({ todoeyOverlay: "edit" }, "", window.location.href);
+    }
+
     setEditingTaskId(task.id);
     setEditTitle(task.title);
     setEditDueDate(task.dueDate);
@@ -473,13 +474,35 @@ export default function TodoeyPage() {
   }
 
   function closeEditor() {
-    clearEditState();
+    if (editingTaskId && typeof window !== "undefined") {
+      window.history.back();
+    } else {
+      clearEditState();
+    }
 
     window.setTimeout(() => {
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
     }, 0);
+  }
+
+  function openFullScreenImage(imageDataUrl: string) {
+    if (!imageDataUrl) return;
+
+    if (!fullScreenImage && typeof window !== "undefined") {
+      window.history.pushState({ todoeyOverlay: "image" }, "", window.location.href);
+    }
+
+    setFullScreenImage(imageDataUrl);
+  }
+
+  function closeFullScreenImage() {
+    if (fullScreenImage && typeof window !== "undefined") {
+      window.history.back();
+    } else {
+      setFullScreenImage("");
+    }
   }
 
   function saveEdit() {
@@ -1255,7 +1278,7 @@ export default function TodoeyPage() {
                 {newImageDataUrl ? (
                   <button
                     style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
-                    onClick={() => setFullScreenImage(newImageDataUrl)}
+                    onClick={() => openFullScreenImage(newImageDataUrl)}
                   >
                     <img
                       style={styles.imagePreview}
@@ -1490,7 +1513,7 @@ export default function TodoeyPage() {
       </div>
 
       {fullScreenImage ? (
-        <div style={styles.fullScreenImageOverlay} onClick={() => setFullScreenImage("")}>
+        <div style={styles.fullScreenImageOverlay} onClick={closeFullScreenImage}>
           <img
             style={styles.fullScreenImage}
             src={fullScreenImage}
@@ -1502,10 +1525,7 @@ export default function TodoeyPage() {
       {editingTask ? (
         <div style={styles.modalOverlay} onClick={closeEditor}>
           <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
-            <div style={styles.modalTitle}>Edit Task</div>
-
             <div style={styles.fieldGroup}>
-              <label style={styles.fieldLabel}>Task name</label>
               <input
                 style={styles.input}
                 value={editTitle}
@@ -1625,7 +1645,7 @@ export default function TodoeyPage() {
               {editImageDataUrl ? (
                 <button
                   style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
-                  onClick={() => setFullScreenImage(editImageDataUrl)}
+                  onClick={() => openFullScreenImage(editImageDataUrl)}
                 >
                   <img
                     style={styles.imagePreview}
