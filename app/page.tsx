@@ -813,7 +813,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
-      gridTemplateColumns: "1fr 48px 48px",
+      gridTemplateColumns: "1fr 48px 48px 48px",
       gap: "10px",
       alignItems: "center",
       padding: "10px 12px",
@@ -821,6 +821,20 @@ export default function TodoeyPage() {
       border: "1px solid #2f2f35",
       background: "#111114",
       marginBottom: "12px",
+    } as React.CSSProperties,
+    activeCameraIconButton: {
+      width: "48px",
+      height: "48px",
+      borderRadius: "12px",
+      border: "1px solid #6d28d9",
+      background: "#15111d",
+      color: "#ffffff",
+      fontSize: "22px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "all 0.15s ease",
     } as React.CSSProperties,
     recurrenceRow: {
       display: "flex",
@@ -1229,31 +1243,16 @@ export default function TodoeyPage() {
                   placeholder="Add extra details if needed"
                 />
 
-                <div style={styles.imageButtonRow}>
-                  <label style={styles.imageActionButton}>
-                    {newImageDataUrl ? "Change image" : "Add image"}
-                    <input
-                      style={styles.hiddenFileInput}
-                      type="file"
-                      accept="image/*"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const compressed = await compressImage(file);
-                        setNewImageDataUrl(compressed);
-                      }}
-                    />
-                  </label>
-
-                  {newImageDataUrl ? (
+                {newImageDataUrl ? (
+                  <div style={styles.imageButtonRow}>
                     <button
                       style={styles.imageActionButton}
                       onClick={() => setNewImageDataUrl("")}
                     >
                       Remove image
                     </button>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
 
                 {newImageDataUrl ? (
                   <button
@@ -1293,6 +1292,25 @@ export default function TodoeyPage() {
               >
                 🔄
               </button>
+              <label
+                style={newImageDataUrl ? styles.activeCameraIconButton : styles.toggleIconButton}
+                aria-label={newImageDataUrl ? "Change image" : "Add image"}
+                title={newImageDataUrl ? "Change image" : "Add image"}
+              >
+                📷
+                <input
+                  style={styles.hiddenFileInput}
+                  type="file"
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const compressed = await compressImage(file);
+                    setNewImageDataUrl(compressed);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             </div>
 
             {recurrence !== "none" ? (
