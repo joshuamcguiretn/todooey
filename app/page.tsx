@@ -664,15 +664,16 @@ export default function TodoeyPage() {
       display: "flex",
       gap: "8px",
       overflowX: "auto",
-      paddingTop: "10px",
-      paddingBottom: "2px",
+      padding: "2px 0",
+      marginBottom: "12px",
     } as React.CSSProperties,
     workloadDay: {
       minWidth: "58px",
       borderRadius: "12px",
       padding: "8px 6px",
-      background: "rgba(16,16,18,0.18)",
-      border: "1px solid rgba(16,16,18,0.14)",
+      background: "#111114",
+      border: "1px solid #2f2f35",
+      color: "#ffffff",
       textAlign: "center",
     } as React.CSSProperties,
     workloadLabel: {
@@ -1197,14 +1198,6 @@ export default function TodoeyPage() {
                 : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done`}
             </div>
 
-            <div style={styles.workloadForecast}>
-              {workloadForecast.map((day) => (
-                <div key={day.label} style={styles.workloadDay}>
-                  <div style={styles.workloadLabel}>{day.label}</div>
-                  <div style={styles.workloadCount}>{day.count}</div>
-                </div>
-              ))}
-            </div>
           </div>
 
           <div style={styles.section}>
@@ -1369,6 +1362,17 @@ export default function TodoeyPage() {
                   />
                 </div>
               </>
+            ) : null}
+
+            {viewMode === "future" ? (
+              <div style={styles.workloadForecast}>
+                {workloadForecast.map((day) => (
+                  <div key={day.label} style={styles.workloadDay}>
+                    <div style={styles.workloadLabel}>{day.label}</div>
+                    <div style={styles.workloadCount}>{day.count}</div>
+                  </div>
+                ))}
+              </div>
             ) : null}
 
             {visibleTasks.length === 0 ? (
