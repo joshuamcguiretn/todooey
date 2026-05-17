@@ -709,13 +709,6 @@ export default function TodoeyPage() {
       fontSize: "18px",
       fontWeight: 800,
     } as React.CSSProperties,
-    progressText: {
-      textAlign: "center",
-      fontSize: "13px",
-      fontWeight: 700,
-      opacity: 0.86,
-      marginBottom: "6px",
-    } as React.CSSProperties,
     progressTrack: {
       width: "100%",
       height: "12px",
@@ -1214,11 +1207,6 @@ export default function TodoeyPage() {
                   width: `${progressStats.percent}%`,
                 }}
               />
-            </div>
-            <div style={styles.progressText}>
-              {progressStats.totalTodayCount === 0
-                ? "Nothing due right now"
-                : `${progressStats.completedTodayCount} of ${progressStats.totalTodayCount} done`}
             </div>
 
           </div>
