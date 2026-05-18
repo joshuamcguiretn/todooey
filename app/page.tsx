@@ -621,6 +621,20 @@ export default function TodoeyPage() {
     }
   }
 
+  function deleteRecurringTask(task: Task) {
+    const shouldDelete = window.confirm(
+      `Delete this recurring task?\n\n${task.title}`
+    );
+
+    if (!shouldDelete) return;
+
+    if (editingTaskId === task.id) {
+      clearEditState();
+    }
+
+    setTasks((prev) => prev.filter((item) => item.id !== task.id));
+  }
+
   function undoLastComplete() {
     if (!lastCompletedTaskId) return;
 
@@ -1051,6 +1065,22 @@ export default function TodoeyPage() {
       cursor: "pointer",
       margin: 0,
     } as React.CSSProperties,
+    deleteRecurringButton: {
+      width: "24px",
+      height: "24px",
+      borderRadius: "8px",
+      border: "1px solid rgba(239, 68, 68, 0.55)",
+      background: "rgba(127, 29, 29, 0.35)",
+      color: "#fca5a5",
+      cursor: "pointer",
+      fontSize: "20px",
+      fontWeight: 800,
+      lineHeight: 1,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+    } as React.CSSProperties,
     taskBlock: {
       minWidth: 0,
       cursor: "pointer",
@@ -1412,13 +1442,24 @@ export default function TodoeyPage() {
                     }}
                   >
                     <div style={styles.checkboxCell}>
-                      <input
-                        style={styles.checkbox}
-                        type="checkbox"
-                        checked={task.done}
-                        onChange={() => toggleDone(task.id)}
-                        aria-label={`Mark ${task.title} done`}
-                      />
+                      {viewMode === "recurring" ? (
+                        <button
+                          style={styles.deleteRecurringButton}
+                          onClick={() => deleteRecurringTask(task)}
+                          aria-label={`Delete recurring task ${task.title}`}
+                          title="Delete recurring task"
+                        >
+                          ×
+                        </button>
+                      ) : (
+                        <input
+                          style={styles.checkbox}
+                          type="checkbox"
+                          checked={task.done}
+                          onChange={() => toggleDone(task.id)}
+                          aria-label={`Mark ${task.title} done`}
+                        />
+                      )}
                     </div>
 
                     <div style={styles.taskBlock} onClick={() => openEditor(task)}>
