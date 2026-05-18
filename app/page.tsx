@@ -1047,6 +1047,11 @@ export default function TodoeyPage() {
       background: "#111114",
       transition: "opacity 0.28s ease, transform 0.28s ease, box-shadow 0.28s ease, background 0.28s ease",
     } as React.CSSProperties,
+    recurringItemRow: {
+      gridTemplateColumns: "1fr 56px",
+      alignItems: "center",
+      padding: "10px 8px 10px 12px",
+    } as React.CSSProperties,
     completingItemRow: {
       opacity: 0,
       transform: "scale(1.02)",
@@ -1066,14 +1071,14 @@ export default function TodoeyPage() {
       margin: 0,
     } as React.CSSProperties,
     deleteRecurringButton: {
-      width: "24px",
-      height: "24px",
-      borderRadius: "8px",
+      width: "48px",
+      height: "48px",
+      borderRadius: "12px",
       border: "1px solid rgba(239, 68, 68, 0.55)",
       background: "rgba(127, 29, 29, 0.35)",
       color: "#fca5a5",
       cursor: "pointer",
-      fontSize: "20px",
+      fontSize: "34px",
       fontWeight: 800,
       lineHeight: 1,
       display: "flex",
@@ -1436,22 +1441,14 @@ export default function TodoeyPage() {
                     key={task.id}
                     style={{
                       ...styles.itemRow,
+                      ...(viewMode === "recurring" ? styles.recurringItemRow : {}),
                       ...(isCompleting ? styles.completingItemRow : {}),
                       borderBottom:
                         index === visibleTasks.length - 1 ? "none" : styles.itemRow.borderBottom,
                     }}
                   >
-                    <div style={styles.checkboxCell}>
-                      {viewMode === "recurring" ? (
-                        <button
-                          style={styles.deleteRecurringButton}
-                          onClick={() => deleteRecurringTask(task)}
-                          aria-label={`Delete recurring task ${task.title}`}
-                          title="Delete recurring task"
-                        >
-                          ×
-                        </button>
-                      ) : (
+                    {viewMode !== "recurring" ? (
+                      <div style={styles.checkboxCell}>
                         <input
                           style={styles.checkbox}
                           type="checkbox"
@@ -1459,8 +1456,8 @@ export default function TodoeyPage() {
                           onChange={() => toggleDone(task.id)}
                           aria-label={`Mark ${task.title} done`}
                         />
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
 
                     <div style={styles.taskBlock} onClick={() => openEditor(task)}>
                       <div style={styles.taskText}>{task.title}</div>
@@ -1471,11 +1468,24 @@ export default function TodoeyPage() {
                       </div>
                     </div>
 
-                    <div style={styles.fireCell}>
-                      {task.priority === 1 ? <span>🔥</span> : null}
-                      {task.description ? <span>📝</span> : null}
-                      {task.imageDataUrl ? <span>📷</span> : null}
-                    </div>
+                    {viewMode === "recurring" ? (
+                      <div style={styles.fireCell}>
+                        <button
+                          style={styles.deleteRecurringButton}
+                          onClick={() => deleteRecurringTask(task)}
+                          aria-label={`Delete recurring task ${task.title}`}
+                          title="Delete recurring task"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={styles.fireCell}>
+                        {task.priority === 1 ? <span>🔥</span> : null}
+                        {task.description ? <span>📝</span> : null}
+                        {task.imageDataUrl ? <span>📷</span> : null}
+                      </div>
+                    )}
                   </div>
                   );
                 })}
