@@ -278,6 +278,24 @@ function compressImage(file: File): Promise<string> {
   });
 }
 
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 760px)");
+    const updateIsDesktop = () => setIsDesktop(mediaQuery.matches);
+
+    updateIsDesktop();
+    mediaQuery.addEventListener("change", updateIsDesktop);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateIsDesktop);
+    };
+  }, []);
+
+  return isDesktop;
+}
+
 async function fetchCloudTasks(userId: string) {
   if (!supabase) return { tasks: [] as Task[], error: "Supabase is not configured." };
 
@@ -370,6 +388,7 @@ async function saveCloudDailyProgress(userId: string, progress: DailyProgress) {
 }
 
 export default function TodoeyPage() {
+  const isDesktop = useIsDesktop();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -1011,20 +1030,21 @@ export default function TodoeyPage() {
       minHeight: "100vh",
       background: "#0b0b0d",
       color: "#ffffff",
-      padding: 0,
+      padding: isDesktop ? "28px 18px" : 0,
       fontFamily: "Arial, sans-serif",
     } as React.CSSProperties,
     wrap: {
       width: "100%",
-      margin: 0,
+      maxWidth: isDesktop ? "520px" : "none",
+      margin: isDesktop ? "0 auto" : 0,
     } as React.CSSProperties,
     shell: {
-      minHeight: "100vh",
+      minHeight: isDesktop ? "calc(100vh - 56px)" : "100vh",
       background: "#17171a",
-      border: "none",
-      borderRadius: 0,
+      border: isDesktop ? "1px solid #2f2f35" : "none",
+      borderRadius: isDesktop ? "24px" : 0,
       overflow: "hidden",
-      boxShadow: "none",
+      boxShadow: isDesktop ? "0 24px 80px rgba(0,0,0,0.42)" : "none",
     } as React.CSSProperties,
     header: {
       background: "#3a3a3f",
@@ -1098,9 +1118,11 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     bottomNav: {
       position: "fixed",
-      left: "10px",
-      right: "10px",
-      bottom: "10px",
+      left: isDesktop ? "50%" : "10px",
+      right: isDesktop ? "auto" : "10px",
+      bottom: isDesktop ? "28px" : "10px",
+      width: isDesktop ? "calc(520px - 36px)" : "auto",
+      transform: isDesktop ? "translateX(-50%)" : "none",
       zIndex: 40,
       display: "grid",
       gridTemplateColumns: "1fr 1fr 1fr",
