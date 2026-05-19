@@ -398,9 +398,6 @@ export default function TodoeyPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [cloudLoaded, setCloudLoaded] = useState(!isSupabaseConfigured);
-  const [cloudStatus, setCloudStatus] = useState(
-    isSupabaseConfigured ? "Sign in to sync" : "Local only"
-  );
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
@@ -537,7 +534,6 @@ export default function TodoeyPage() {
     if (!user) {
       window.setTimeout(() => {
         setCloudLoaded(false);
-        setCloudStatus("Sign in to sync");
       }, 0);
       return;
     }
@@ -546,7 +542,6 @@ export default function TodoeyPage() {
 
     async function loadCloudData() {
       setCloudLoaded(false);
-      setCloudStatus("Syncing account...");
 
       const [{ tasks: cloudTasks, error: taskError }, progressResult] =
         await Promise.all([
@@ -557,7 +552,6 @@ export default function TodoeyPage() {
       if (isCancelled) return;
 
       if (taskError) {
-        setCloudStatus("Sync error");
         setAuthMessage(taskError);
         setCloudLoaded(true);
         return;
@@ -578,7 +572,6 @@ export default function TodoeyPage() {
         if (isCancelled) return;
 
         if (migrationError) {
-          setCloudStatus("Sync error");
           setAuthMessage(migrationError);
         } else {
           nextTasks = localTasks;
@@ -596,7 +589,6 @@ export default function TodoeyPage() {
       }
 
       setCloudLoaded(true);
-      setCloudStatus("Synced");
     }
 
     loadCloudData();
@@ -613,11 +605,8 @@ export default function TodoeyPage() {
       clearTimeout(cloudTaskSaveTimerRef.current);
     }
 
-    window.setTimeout(() => setCloudStatus("Saving..."), 0);
-
     cloudTaskSaveTimerRef.current = setTimeout(() => {
       saveCloudTasks(user.id, tasks).then((error) => {
-        setCloudStatus(error ? "Sync error" : "Synced");
         if (error) setAuthMessage(error);
       });
     }, 500);
@@ -639,7 +628,6 @@ export default function TodoeyPage() {
     cloudProgressSaveTimerRef.current = setTimeout(() => {
       saveCloudDailyProgress(user.id, dailyProgress).then((error) => {
         if (error) {
-          setCloudStatus("Sync error");
           setAuthMessage(error);
         }
       });
@@ -772,18 +760,6 @@ export default function TodoeyPage() {
 
     setAuthPassword("");
     setAuthMessage("Signed in. Sync is starting.");
-  }
-
-  async function signOut() {
-    if (!supabase || authBusy) return;
-
-    setAuthBusy(true);
-    await supabase.auth.signOut();
-    setAuthBusy(false);
-    setUser(null);
-    setCloudLoaded(false);
-    setCloudStatus("Sign in to sync");
-    setAuthMessage("Signed out. This device is back in local mode.");
   }
 
   function resetNewTaskInputs() {
@@ -1157,19 +1133,27 @@ export default function TodoeyPage() {
       marginBottom: "12px",
       flexWrap: "wrap",
     } as React.CSSProperties,
-    accountPanel: {
-      border: "1px solid #2f2f35",
-      background: "#111114",
-      borderRadius: "14px",
-      padding: "10px",
-      marginBottom: "12px",
-    } as React.CSSProperties,
-    accountRow: {
+    authWrap: {
+      minHeight: "100vh",
       display: "flex",
-      gap: "8px",
       alignItems: "center",
-      justifyContent: "space-between",
-      flexWrap: "wrap",
+      justifyContent: "center",
+      padding: "18px",
+    } as React.CSSProperties,
+    authCard: {
+      width: "100%",
+      maxWidth: "420px",
+      border: "1px solid #2f2f35",
+      background: "#17171a",
+      borderRadius: "22px",
+      boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+      padding: "18px",
+    } as React.CSSProperties,
+    authBrand: {
+      fontSize: "38px",
+      fontWeight: 800,
+      lineHeight: 1,
+      marginBottom: "14px",
     } as React.CSSProperties,
     accountTitle: {
       color: "#ffffff",
@@ -1630,6 +1614,69 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
   };
 
+  if (isSupabaseConfigured && (!authLoaded || !user)) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.authWrap}>
+          <div style={styles.authCard}>
+            <div style={styles.authBrand}>ToDooey</div>
+
+            {!authLoaded ? (
+              <div style={styles.accountSubtext}>Checking account...</div>
+            ) : (
+              <>
+                <div style={styles.accountTitle}>Sign in</div>
+                <div style={styles.accountSubtext}>Tasks, everywhere.</div>
+
+                <div style={styles.accountForm}>
+                  <input
+                    style={styles.input}
+                    type="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="Email"
+                    autoComplete="email"
+                  />
+                  <input
+                    style={styles.input}
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitAuth("sign-in");
+                    }}
+                    placeholder="Password"
+                    autoComplete="current-password"
+                  />
+                  <div style={styles.accountButtonRow}>
+                    <button
+                      style={styles.saveButton}
+                      onClick={() => submitAuth("sign-in")}
+                      disabled={authBusy}
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      style={styles.cancelButton}
+                      onClick={() => submitAuth("sign-up")}
+                      disabled={authBusy}
+                    >
+                      Create account
+                    </button>
+                  </div>
+                </div>
+
+                {authMessage ? (
+                  <div style={styles.accountSubtext}>{authMessage}</div>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.wrap}>
@@ -1657,88 +1704,6 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.accountPanel}>
-              {!isSupabaseConfigured ? (
-                <div style={styles.accountRow}>
-                  <div>
-                    <div style={styles.accountTitle}>Local tasks</div>
-                    <div style={styles.accountSubtext}>
-                      Add Supabase keys to enable account sync.
-                    </div>
-                  </div>
-                  <div style={styles.accountSubtext}>{cloudStatus}</div>
-                </div>
-              ) : !authLoaded ? (
-                <div style={styles.accountSubtext}>Checking account...</div>
-              ) : user ? (
-                <div style={styles.accountRow}>
-                  <div>
-                    <div style={styles.accountTitle}>
-                      {user.email ?? "Signed in"}
-                    </div>
-                    <div style={styles.accountSubtext}>Cloud: {cloudStatus}</div>
-                  </div>
-                  <button
-                    style={styles.toggleButton}
-                    onClick={signOut}
-                    disabled={authBusy}
-                  >
-                    Sign out
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <div style={styles.accountTitle}>Sign in to sync</div>
-                    <div style={styles.accountSubtext}>
-                      Use the same account on phone and computer.
-                    </div>
-                  </div>
-                  <div style={styles.accountForm}>
-                    <input
-                      style={styles.input}
-                      type="email"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      placeholder="Email"
-                      autoComplete="email"
-                    />
-                    <input
-                      style={styles.input}
-                      type="password"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") submitAuth("sign-in");
-                      }}
-                      placeholder="Password"
-                      autoComplete="current-password"
-                    />
-                    <div style={styles.accountButtonRow}>
-                      <button
-                        style={styles.saveButton}
-                        onClick={() => submitAuth("sign-in")}
-                        disabled={authBusy}
-                      >
-                        Sign in
-                      </button>
-                      <button
-                        style={styles.cancelButton}
-                        onClick={() => submitAuth("sign-up")}
-                        disabled={authBusy}
-                      >
-                        Create account
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {authMessage ? (
-                <div style={styles.accountSubtext}>{authMessage}</div>
-              ) : null}
-            </div>
-
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
                 <input
