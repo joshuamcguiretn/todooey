@@ -762,6 +762,24 @@ export default function TodoeyPage() {
     setAuthMessage("Signed in. Sync is starting.");
   }
 
+  async function signOut() {
+    if (!supabase || authBusy) return;
+
+    setAuthBusy(true);
+    const { error } = await supabase.auth.signOut();
+    setAuthBusy(false);
+
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+
+    setUser(null);
+    setCloudLoaded(false);
+    setAuthPassword("");
+    setAuthMessage("Signed out.");
+  }
+
   function resetNewTaskInputs() {
     setTitle("");
     setDueDate(formatDateInput());
@@ -1196,6 +1214,23 @@ export default function TodoeyPage() {
       cursor: "pointer",
       fontWeight: 700,
       fontSize: "14px",
+    } as React.CSSProperties,
+    signOutArea: {
+      display: "flex",
+      justifyContent: "center",
+      marginTop: "18px",
+      paddingTop: "14px",
+      borderTop: "1px solid #24242a",
+    } as React.CSSProperties,
+    signOutButton: {
+      padding: "10px 14px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "transparent",
+      color: "#aeb0b8",
+      cursor: "pointer",
+      fontWeight: 700,
+      fontSize: "13px",
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
@@ -1963,6 +1998,18 @@ export default function TodoeyPage() {
                 </button>
               ) : null}
             </div>
+
+            {isSupabaseConfigured && user ? (
+              <div style={styles.signOutArea}>
+                <button
+                  style={styles.signOutButton}
+                  onClick={signOut}
+                  disabled={authBusy}
+                >
+                  {authBusy ? "Signing out..." : "Sign out"}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
