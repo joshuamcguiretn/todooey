@@ -1,6 +1,8 @@
 "use client";
 
+import type { User } from "@supabase/supabase-js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type Priority = 1 | 2;
 type Recurrence = "none" | "daily" | "weekly" | "monthly";
@@ -22,10 +24,26 @@ type Task = {
 
 const STORAGE_KEY = "todoey-v1";
 const DAILY_PROGRESS_KEY = "todoey-daily-progress";
+const CLOUD_MIGRATION_KEY = "todoey-cloud-migrated";
 
 type DailyProgress = {
   date: string;
   completedTodayCount: number;
+};
+
+type DbTask = {
+  id: string;
+  title: string;
+  due_date: string;
+  priority: Priority;
+  recurrence: Recurrence;
+  recurrence_interval: number;
+  rotation_titles: string[] | null;
+  rotation_title_index: number | null;
+  description: string | null;
+  image_data_url: string | null;
+  done: boolean;
+  created_at: string;
 };
 
 function formatDateInput(date = new Date()) {
@@ -114,6 +132,87 @@ function normalizeRotationIndex(value: unknown, titles: string[], currentTitle: 
   return currentIndex >= 0 ? currentIndex : 0;
 }
 
+function normalizeRecurrence(value: unknown): Recurrence {
+  if (value === "daily" || value === "weekly" || value === "monthly") {
+    return value;
+  }
+
+  return "none";
+}
+
+function normalizeTask(task: Partial<Task>): Task {
+  const title = task.title ?? "";
+  const rotationTitles = normalizeRotationTitles(task.rotationTitles);
+
+  return {
+    id: task.id ?? generateId(),
+    title,
+    dueDate: task.dueDate ?? formatDateInput(),
+    priority: task.priority === 1 ? 1 : 2,
+    recurrence: normalizeRecurrence(task.recurrence),
+    recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
+    rotationTitles,
+    rotationTitleIndex: normalizeRotationIndex(
+      task.rotationTitleIndex,
+      rotationTitles,
+      title
+    ),
+    description: task.description ?? "",
+    imageDataUrl: task.imageDataUrl ?? "",
+    done: Boolean(task.done),
+    createdAt: task.createdAt ?? new Date().toISOString(),
+  };
+}
+
+function loadLocalTasks() {
+  if (typeof window === "undefined") return [];
+
+  const saved = window.localStorage.getItem(STORAGE_KEY);
+  if (!saved) return [];
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<Task>[];
+    return parsed.map(normalizeTask);
+  } catch {
+    return [];
+  }
+}
+
+function dbTaskToTask(task: DbTask): Task {
+  return normalizeTask({
+    id: task.id,
+    title: task.title,
+    dueDate: task.due_date,
+    priority: task.priority === 1 ? 1 : 2,
+    recurrence: normalizeRecurrence(task.recurrence),
+    recurrenceInterval: task.recurrence_interval,
+    rotationTitles: task.rotation_titles ?? [],
+    rotationTitleIndex: task.rotation_title_index ?? 0,
+    description: task.description ?? "",
+    imageDataUrl: task.image_data_url ?? "",
+    done: task.done,
+    createdAt: task.created_at,
+  });
+}
+
+function taskToDbTask(task: Task, userId: string) {
+  return {
+    id: task.id,
+    user_id: userId,
+    title: task.title,
+    due_date: task.dueDate,
+    priority: task.priority,
+    recurrence: task.recurrence,
+    recurrence_interval: normalizeInterval(task.recurrenceInterval),
+    rotation_titles: task.rotationTitles,
+    rotation_title_index: task.rotationTitleIndex,
+    description: task.description,
+    image_data_url: task.imageDataUrl,
+    done: task.done,
+    created_at: task.createdAt,
+  };
+}
+
 function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
   const interval = normalizeInterval(intervalInput);
   if (recurrence === "daily") return interval === 1 ? "day" : "days";
@@ -179,9 +278,110 @@ function compressImage(file: File): Promise<string> {
   });
 }
 
+async function fetchCloudTasks(userId: string) {
+  if (!supabase) return { tasks: [] as Task[], error: "Supabase is not configured." };
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("user_id", userId)
+    .order("due_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) return { tasks: [] as Task[], error: error.message };
+
+  return {
+    tasks: ((data ?? []) as DbTask[]).map(dbTaskToTask),
+    error: "",
+  };
+}
+
+async function saveCloudTasks(userId: string, tasks: Task[]) {
+  if (!supabase) return "Supabase is not configured.";
+
+  const records = tasks.map((task) => taskToDbTask(task, userId));
+
+  if (records.length > 0) {
+    const { error } = await supabase.from("tasks").upsert(records);
+    if (error) return error.message;
+  }
+
+  const { data: existingTasks, error: existingError } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("user_id", userId);
+
+  if (existingError) return existingError.message;
+
+  const nextIds = new Set(tasks.map((task) => task.id));
+  const idsToDelete = ((existingTasks ?? []) as { id: string }[])
+    .map((task) => task.id)
+    .filter((id) => !nextIds.has(id));
+
+  if (idsToDelete.length > 0) {
+    const { error } = await supabase
+      .from("tasks")
+      .delete()
+      .eq("user_id", userId)
+      .in("id", idsToDelete);
+
+    if (error) return error.message;
+  }
+
+  return "";
+}
+
+async function fetchCloudDailyProgress(userId: string) {
+  if (!supabase) {
+    return { progress: null as DailyProgress | null, error: "Supabase is not configured." };
+  }
+
+  const today = formatDateInput();
+  const { data, error } = await supabase
+    .from("daily_progress")
+    .select("date, completed_today_count")
+    .eq("user_id", userId)
+    .eq("date", today)
+    .maybeSingle();
+
+  if (error) return { progress: null, error: error.message };
+
+  return {
+    progress: data
+      ? {
+          date: String(data.date),
+          completedTodayCount: Math.max(0, Number(data.completed_today_count ?? 0)),
+        }
+      : null,
+    error: "",
+  };
+}
+
+async function saveCloudDailyProgress(userId: string, progress: DailyProgress) {
+  if (!supabase) return "Supabase is not configured.";
+
+  const { error } = await supabase.from("daily_progress").upsert({
+    user_id: userId,
+    date: progress.date,
+    completed_today_count: Math.max(0, progress.completedTodayCount),
+  });
+
+  return error?.message ?? "";
+}
+
 export default function TodoeyPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoaded, setAuthLoaded] = useState(!isSupabaseConfigured);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [cloudLoaded, setCloudLoaded] = useState(!isSupabaseConfigured);
+  const [cloudStatus, setCloudStatus] = useState(
+    isSupabaseConfigured ? "Sign in to sync" : "Local only"
+  );
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
@@ -211,6 +411,8 @@ export default function TodoeyPage() {
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
   const [fullScreenImage, setFullScreenImage] = useState("");
   const taskInputRef = useRef<HTMLInputElement | null>(null);
+  const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearEditState = React.useCallback(() => {
     setEditingTaskId(null);
@@ -225,59 +427,12 @@ export default function TodoeyPage() {
   }, []);
 
   useEffect(() => {
-    const saved =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(STORAGE_KEY)
-        : null;
+    const localTasks = loadLocalTasks();
 
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as Partial<Task>[];
-
-        const normalized: Task[] = parsed.map((task) => {
-          const title = task.title ?? "";
-          const rotationTitles = normalizeRotationTitles(
-            (task as Partial<Task>).rotationTitles
-          );
-
-          return {
-            id: task.id ?? generateId(),
-            title,
-            dueDate: task.dueDate ?? formatDateInput(),
-            priority: task.priority === 1 ? 1 : 2,
-            recurrence:
-              task.recurrence === "daily" ||
-              task.recurrence === "weekly" ||
-              task.recurrence === "monthly"
-                ? task.recurrence
-                : "none",
-            recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
-            rotationTitles,
-            rotationTitleIndex: normalizeRotationIndex(
-              (task as Partial<Task>).rotationTitleIndex,
-              rotationTitles,
-              title
-            ),
-            description: task.description ?? "",
-            imageDataUrl: task.imageDataUrl ?? "",
-            done: Boolean(task.done),
-            createdAt: task.createdAt ?? new Date().toISOString(),
-          };
-        });
-
-        window.setTimeout(() => {
-          setTasks(normalized);
-          setTasksLoaded(true);
-        }, 0);
-      } catch {
-        window.setTimeout(() => {
-          setTasks([]);
-          setTasksLoaded(true);
-        }, 0);
-      }
-    } else {
-      window.setTimeout(() => setTasksLoaded(true), 0);
-    }
+    window.setTimeout(() => {
+      setTasks(localTasks);
+      setTasksLoaded(true);
+    }, 0);
   }, []);
 
   useEffect(() => {
@@ -331,6 +486,152 @@ export default function TodoeyPage() {
       window.setTimeout(() => setDailyProgressLoaded(true), 0);
     }
   }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    let isMounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!isMounted) return;
+      setUser(data.session?.user ?? null);
+      setAuthLoaded(true);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthLoaded(true);
+      setAuthMessage("");
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    if (!user) {
+      window.setTimeout(() => {
+        setCloudLoaded(false);
+        setCloudStatus("Sign in to sync");
+      }, 0);
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadCloudData() {
+      setCloudLoaded(false);
+      setCloudStatus("Syncing account...");
+
+      const [{ tasks: cloudTasks, error: taskError }, progressResult] =
+        await Promise.all([
+          fetchCloudTasks(user!.id),
+          fetchCloudDailyProgress(user!.id),
+        ]);
+
+      if (isCancelled) return;
+
+      if (taskError) {
+        setCloudStatus("Sync error");
+        setAuthMessage(taskError);
+        setCloudLoaded(true);
+        return;
+      }
+
+      let nextTasks = cloudTasks;
+      const localTasks = loadLocalTasks();
+      const migrationKey = `${CLOUD_MIGRATION_KEY}-${user!.id}`;
+      const shouldMigrateLocalTasks =
+        cloudTasks.length === 0 &&
+        localTasks.length > 0 &&
+        typeof window !== "undefined" &&
+        !window.localStorage.getItem(migrationKey);
+
+      if (shouldMigrateLocalTasks) {
+        const migrationError = await saveCloudTasks(user!.id, localTasks);
+
+        if (isCancelled) return;
+
+        if (migrationError) {
+          setCloudStatus("Sync error");
+          setAuthMessage(migrationError);
+        } else {
+          nextTasks = localTasks;
+          window.localStorage.setItem(migrationKey, "1");
+          setAuthMessage("Moved this device's tasks into your account.");
+        }
+      }
+
+      setTasks(nextTasks);
+
+      if (progressResult.error) {
+        setAuthMessage(progressResult.error);
+      } else if (progressResult.progress) {
+        setDailyProgress(progressResult.progress);
+      }
+
+      setCloudLoaded(true);
+      setCloudStatus("Synced");
+    }
+
+    loadCloudData();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
+
+    if (cloudTaskSaveTimerRef.current) {
+      clearTimeout(cloudTaskSaveTimerRef.current);
+    }
+
+    window.setTimeout(() => setCloudStatus("Saving..."), 0);
+
+    cloudTaskSaveTimerRef.current = setTimeout(() => {
+      saveCloudTasks(user.id, tasks).then((error) => {
+        setCloudStatus(error ? "Sync error" : "Synced");
+        if (error) setAuthMessage(error);
+      });
+    }, 500);
+
+    return () => {
+      if (cloudTaskSaveTimerRef.current) {
+        clearTimeout(cloudTaskSaveTimerRef.current);
+      }
+    };
+  }, [cloudLoaded, tasks, tasksLoaded, user]);
+
+  useEffect(() => {
+    if (!supabase || !user || !cloudLoaded || !dailyProgressLoaded) return;
+
+    if (cloudProgressSaveTimerRef.current) {
+      clearTimeout(cloudProgressSaveTimerRef.current);
+    }
+
+    cloudProgressSaveTimerRef.current = setTimeout(() => {
+      saveCloudDailyProgress(user.id, dailyProgress).then((error) => {
+        if (error) {
+          setCloudStatus("Sync error");
+          setAuthMessage(error);
+        }
+      });
+    }, 500);
+
+    return () => {
+      if (cloudProgressSaveTimerRef.current) {
+        clearTimeout(cloudProgressSaveTimerRef.current);
+      }
+    };
+  }, [cloudLoaded, dailyProgress, dailyProgressLoaded, user]);
 
   useEffect(() => {
     taskInputRef.current?.focus();
@@ -414,6 +715,57 @@ export default function TodoeyPage() {
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
   }, [tasks, editingTaskId]);
+
+  async function submitAuth(mode: "sign-in" | "sign-up") {
+    if (!supabase || authBusy) return;
+
+    const email = authEmail.trim();
+    if (!email || !authPassword) {
+      setAuthMessage("Enter an email and password.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthMessage(mode === "sign-in" ? "Signing in..." : "Creating account...");
+
+    const { data, error } =
+      mode === "sign-in"
+        ? await supabase.auth.signInWithPassword({
+            email,
+            password: authPassword,
+          })
+        : await supabase.auth.signUp({
+            email,
+            password: authPassword,
+          });
+
+    setAuthBusy(false);
+
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+
+    if (mode === "sign-up" && !data.session) {
+      setAuthMessage("Check your email to finish creating the account.");
+      return;
+    }
+
+    setAuthPassword("");
+    setAuthMessage("Signed in. Sync is starting.");
+  }
+
+  async function signOut() {
+    if (!supabase || authBusy) return;
+
+    setAuthBusy(true);
+    await supabase.auth.signOut();
+    setAuthBusy(false);
+    setUser(null);
+    setCloudLoaded(false);
+    setCloudStatus("Sign in to sync");
+    setAuthMessage("Signed out. This device is back in local mode.");
+  }
 
   function resetNewTaskInputs() {
     setTitle("");
@@ -782,6 +1134,42 @@ export default function TodoeyPage() {
       alignItems: "center",
       marginBottom: "12px",
       flexWrap: "wrap",
+    } as React.CSSProperties,
+    accountPanel: {
+      border: "1px solid #2f2f35",
+      background: "#111114",
+      borderRadius: "14px",
+      padding: "10px",
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    accountRow: {
+      display: "flex",
+      gap: "8px",
+      alignItems: "center",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
+    } as React.CSSProperties,
+    accountTitle: {
+      color: "#ffffff",
+      fontSize: "14px",
+      fontWeight: 800,
+    } as React.CSSProperties,
+    accountSubtext: {
+      color: "#aeb0b8",
+      fontSize: "12px",
+      fontWeight: 700,
+      marginTop: "3px",
+    } as React.CSSProperties,
+    accountForm: {
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      marginTop: "10px",
+    } as React.CSSProperties,
+    accountButtonRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "8px",
     } as React.CSSProperties,
     toggleButton: {
       padding: "10px 12px",
@@ -1247,6 +1635,88 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
+            <div style={styles.accountPanel}>
+              {!isSupabaseConfigured ? (
+                <div style={styles.accountRow}>
+                  <div>
+                    <div style={styles.accountTitle}>Local tasks</div>
+                    <div style={styles.accountSubtext}>
+                      Add Supabase keys to enable account sync.
+                    </div>
+                  </div>
+                  <div style={styles.accountSubtext}>{cloudStatus}</div>
+                </div>
+              ) : !authLoaded ? (
+                <div style={styles.accountSubtext}>Checking account...</div>
+              ) : user ? (
+                <div style={styles.accountRow}>
+                  <div>
+                    <div style={styles.accountTitle}>
+                      {user.email ?? "Signed in"}
+                    </div>
+                    <div style={styles.accountSubtext}>Cloud: {cloudStatus}</div>
+                  </div>
+                  <button
+                    style={styles.toggleButton}
+                    onClick={signOut}
+                    disabled={authBusy}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <div style={styles.accountTitle}>Sign in to sync</div>
+                    <div style={styles.accountSubtext}>
+                      Use the same account on phone and computer.
+                    </div>
+                  </div>
+                  <div style={styles.accountForm}>
+                    <input
+                      style={styles.input}
+                      type="email"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      placeholder="Email"
+                      autoComplete="email"
+                    />
+                    <input
+                      style={styles.input}
+                      type="password"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitAuth("sign-in");
+                      }}
+                      placeholder="Password"
+                      autoComplete="current-password"
+                    />
+                    <div style={styles.accountButtonRow}>
+                      <button
+                        style={styles.saveButton}
+                        onClick={() => submitAuth("sign-in")}
+                        disabled={authBusy}
+                      >
+                        Sign in
+                      </button>
+                      <button
+                        style={styles.cancelButton}
+                        onClick={() => submitAuth("sign-up")}
+                        disabled={authBusy}
+                      >
+                        Create account
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {authMessage ? (
+                <div style={styles.accountSubtext}>{authMessage}</div>
+              ) : null}
+            </div>
+
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
                 <input
