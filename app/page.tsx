@@ -26,6 +26,7 @@ const STORAGE_KEY = "todoey-v1";
 const DAILY_PROGRESS_KEY = "todoey-daily-progress";
 const CLOUD_MIGRATION_KEY = "todoey-cloud-migrated";
 const PENDING_SYNC_KEY = "todoey-pending-sync-v1";
+const SYNC_BASE_KEY = "todoey-sync-base-v1";
 
 type DailyProgress = {
   date: string;
@@ -38,6 +39,24 @@ type PendingSync = {
   progressDates: string[];
   taskUpdatedAt: string;
   progressUpdatedAt: string;
+};
+
+type TaskConflict = {
+  id: string;
+  base: Task | null;
+  local: Task | null;
+  cloud: Task | null;
+};
+
+type TaskMergeResult = {
+  tasks: Task[];
+  conflicts: TaskConflict[];
+};
+
+type TaskSyncResult = {
+  error: string;
+  savedTaskIds: string[];
+  savedDeletedTaskIds: string[];
 };
 
 type DbTask = {
@@ -87,6 +106,23 @@ function dueText(dueDate: string) {
   if (diffDays > 1) return `${diffDays} days ago`;
   if (diffDays === -1) return "Tomorrow";
   return `In ${Math.abs(diffDays)} days`;
+}
+
+function taskConflictTitle(task: Task | null) {
+  return task?.title || "Deleted task";
+}
+
+function taskConflictDetails(task: Task | null) {
+  if (!task) return "Deleted on this side";
+
+  const pieces = [dueText(task.dueDate)];
+  if (task.done) pieces.push("Done");
+  if (task.priority === 1) pieces.push("Priority");
+  if (task.recurrence !== "none") {
+    pieces.push(recurrenceSummary(task.recurrence, task.recurrenceInterval));
+  }
+
+  return pieces.join(" - ");
 }
 
 function upcomingWorkload(tasks: Task[]) {
@@ -185,6 +221,38 @@ function loadLocalTasks() {
   } catch {
     return [];
   }
+}
+
+function syncBaseKey(userId: string) {
+  return `${SYNC_BASE_KEY}-${userId}`;
+}
+
+function loadSyncBaseTasks(userId: string) {
+  if (typeof window === "undefined") return [];
+
+  const saved = window.localStorage.getItem(syncBaseKey(userId));
+  if (!saved) return [];
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<Task>[];
+    return parsed.map(normalizeTask);
+  } catch {
+    return [];
+  }
+}
+
+function saveSyncBaseTasks(userId: string, tasks: Task[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(syncBaseKey(userId), JSON.stringify(sortTasksByDate(tasks)));
+}
+
+function saveSyncBaseTask(userId: string, taskId: string, task: Task | null) {
+  const nextTasks = loadSyncBaseTasks(userId).filter((item) => item.id !== taskId);
+  if (task) {
+    nextTasks.push(task);
+  }
+
+  saveSyncBaseTasks(userId, nextTasks);
 }
 
 function normalizeDailyProgress(progress: Partial<DailyProgress> | null): DailyProgress | null {
@@ -300,17 +368,46 @@ function markPendingProgressChange(userId: string, date: string) {
   });
 }
 
-function clearPendingTaskSync(userId: string, savedTaskUpdatedAt: string) {
+function clearPendingTaskSync(
+  userId: string,
+  savedTaskUpdatedAt: string,
+  savedTaskIds: string[],
+  savedDeletedTaskIds: string[]
+) {
   if (!savedTaskUpdatedAt) return;
 
   const pending = loadPendingSync(userId);
   if (pending.taskUpdatedAt && pending.taskUpdatedAt !== savedTaskUpdatedAt) return;
 
+  const nextTaskIds = pending.taskIds.filter((id) => !savedTaskIds.includes(id));
+  const nextDeletedTaskIds = pending.deletedTaskIds.filter(
+    (id) => !savedDeletedTaskIds.includes(id)
+  );
+
   savePendingSync(userId, {
     ...pending,
-    taskIds: [],
-    deletedTaskIds: [],
-    taskUpdatedAt: "",
+    taskIds: nextTaskIds,
+    deletedTaskIds: nextDeletedTaskIds,
+    taskUpdatedAt:
+      nextTaskIds.length === 0 && nextDeletedTaskIds.length === 0
+        ? ""
+        : pending.taskUpdatedAt,
+  });
+}
+
+function clearPendingTaskDecision(userId: string, taskId: string) {
+  const pending = loadPendingSync(userId);
+  const nextTaskIds = pending.taskIds.filter((id) => id !== taskId);
+  const nextDeletedTaskIds = pending.deletedTaskIds.filter((id) => id !== taskId);
+
+  savePendingSync(userId, {
+    ...pending,
+    taskIds: nextTaskIds,
+    deletedTaskIds: nextDeletedTaskIds,
+    taskUpdatedAt:
+      nextTaskIds.length === 0 && nextDeletedTaskIds.length === 0
+        ? ""
+        : pending.taskUpdatedAt,
   });
 }
 
@@ -348,26 +445,91 @@ function sortTasksByDate(tasks: Task[]) {
   });
 }
 
+function taskSignature(task: Task | null) {
+  if (!task) return "__missing__";
+
+  return JSON.stringify({
+    title: task.title,
+    dueDate: task.dueDate,
+    priority: task.priority,
+    recurrence: task.recurrence,
+    recurrenceInterval: normalizeInterval(task.recurrenceInterval),
+    rotationTitles: task.rotationTitles,
+    rotationTitleIndex: task.rotationTitleIndex,
+    description: task.description,
+    imageDataUrl: task.imageDataUrl,
+    done: task.done,
+    createdAt: task.createdAt,
+  });
+}
+
+function tasksMatch(first: Task | null, second: Task | null) {
+  return taskSignature(first) === taskSignature(second);
+}
+
+function taskChangedSinceBase(task: Task | null, base: Task | null) {
+  return !tasksMatch(task, base);
+}
+
 function mergePendingTasks(
   cloudTasks: Task[],
   localTasks: Task[],
+  baseTasks: Task[],
   pending: PendingSync
-) {
+): TaskMergeResult {
   const merged = new Map(cloudTasks.map((task) => [task.id, task]));
   const localById = new Map(localTasks.map((task) => [task.id, task]));
+  const cloudById = new Map(cloudTasks.map((task) => [task.id, task]));
+  const baseById = new Map(baseTasks.map((task) => [task.id, task]));
+  const conflicts: TaskConflict[] = [];
 
   pending.deletedTaskIds.forEach((id) => {
+    const baseTask = baseById.get(id) ?? null;
+    const cloudTask = cloudById.get(id) ?? null;
+
+    if (baseTask && cloudTask && taskChangedSinceBase(cloudTask, baseTask)) {
+      conflicts.push({
+        id,
+        base: baseTask,
+        local: null,
+        cloud: cloudTask,
+      });
+      return;
+    }
+
     merged.delete(id);
   });
 
   pending.taskIds.forEach((id) => {
+    const baseTask = baseById.get(id) ?? null;
     const localTask = localById.get(id);
-    if (localTask) {
-      merged.set(id, localTask);
+    const cloudTask = cloudById.get(id) ?? null;
+
+    if (!localTask) {
+      return;
     }
+
+    const cloudChanged = baseTask
+      ? taskChangedSinceBase(cloudTask, baseTask)
+      : false;
+
+    if (cloudChanged && !tasksMatch(localTask, cloudTask)) {
+      conflicts.push({
+        id,
+        base: baseTask,
+        local: localTask,
+        cloud: cloudTask,
+      });
+      return;
+    }
+
+    merged.set(id, localTask);
   });
 
-  return sortTasksByDate(Array.from(merged.values()));
+  return {
+    tasks: sortTasksByDate(Array.from(merged.values())),
+    conflicts,
+  };
 }
 
 function dbTaskToTask(task: DbTask): Task {
@@ -552,6 +714,71 @@ async function saveCloudTasks(userId: string, tasks: Task[]) {
   }
 }
 
+async function saveCloudTaskChanges(
+  userId: string,
+  tasks: Task[],
+  pending: PendingSync,
+  blockedTaskIds: Set<string>
+): Promise<TaskSyncResult> {
+  if (!supabase) {
+    return {
+      error: "Supabase is not configured.",
+      savedTaskIds: [],
+      savedDeletedTaskIds: [],
+    };
+  }
+
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const taskIdsToSave = pending.taskIds.filter(
+    (id) => !blockedTaskIds.has(id) && tasksById.has(id)
+  );
+  const deletedTaskIdsToSave = pending.deletedTaskIds.filter(
+    (id) => !blockedTaskIds.has(id)
+  );
+
+  if (taskIdsToSave.length === 0 && deletedTaskIdsToSave.length === 0) {
+    return { error: "", savedTaskIds: [], savedDeletedTaskIds: [] };
+  }
+
+  try {
+    const records = taskIdsToSave
+      .map((id) => tasksById.get(id))
+      .filter((task): task is Task => Boolean(task))
+      .map((task) => taskToDbTask(task, userId));
+
+    if (records.length > 0) {
+      const { error } = await supabase.from("tasks").upsert(records);
+      if (error) {
+        return { error: error.message, savedTaskIds: [], savedDeletedTaskIds: [] };
+      }
+    }
+
+    if (deletedTaskIdsToSave.length > 0) {
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("user_id", userId)
+        .in("id", deletedTaskIdsToSave);
+
+      if (error) {
+        return { error: error.message, savedTaskIds: [], savedDeletedTaskIds: [] };
+      }
+    }
+
+    return {
+      error: "",
+      savedTaskIds: taskIdsToSave,
+      savedDeletedTaskIds: deletedTaskIdsToSave,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Could not sync task changes.",
+      savedTaskIds: [],
+      savedDeletedTaskIds: [],
+    };
+  }
+}
+
 async function fetchCloudDailyProgress(userId: string) {
   if (!supabase) {
     return { progress: null as DailyProgress | null, error: "Supabase is not configured." };
@@ -640,6 +867,7 @@ export default function TodoeyPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
   const [fullScreenImage, setFullScreenImage] = useState("");
+  const [taskConflicts, setTaskConflicts] = useState<TaskConflict[]>([]);
   const [syncRetryNonce, setSyncRetryNonce] = useState(0);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -776,10 +1004,12 @@ export default function TodoeyPage() {
       const pendingSync = loadPendingSync(user!.id);
       const localTasks = loadLocalTasks();
       const localProgress = loadLocalDailyProgress();
+      const baseTasks = loadSyncBaseTasks(user!.id);
       const hasPendingTaskChanges = hasPendingTasks(pendingSync);
-      let nextTasks = hasPendingTaskChanges
-        ? mergePendingTasks(cloudTasks, localTasks, pendingSync)
-        : cloudTasks;
+      const mergeResult = hasPendingTaskChanges
+        ? mergePendingTasks(cloudTasks, localTasks, baseTasks, pendingSync)
+        : ({ tasks: cloudTasks, conflicts: [] } satisfies TaskMergeResult);
+      let nextTasks = mergeResult.tasks;
       const migrationKey = `${CLOUD_MIGRATION_KEY}-${user!.id}`;
       const shouldMigrateLocalTasks =
         !hasPendingTaskChanges &&
@@ -797,12 +1027,24 @@ export default function TodoeyPage() {
           setAuthMessage(migrationError);
         } else {
           nextTasks = localTasks;
+          saveSyncBaseTasks(user!.id, localTasks);
           window.localStorage.setItem(migrationKey, "1");
           setAuthMessage("Moved this device's tasks into your account.");
         }
+      } else if (!hasPendingTaskChanges) {
+        saveSyncBaseTasks(user!.id, cloudTasks);
       }
 
       setTasks(nextTasks);
+      setTaskConflicts(mergeResult.conflicts);
+
+      if (mergeResult.conflicts.length > 0) {
+        setAuthMessage(
+          `Sync needs a choice for ${mergeResult.conflicts.length} task${
+            mergeResult.conflicts.length === 1 ? "" : "s"
+          }.`
+        );
+      }
 
       if (progressResult.error) {
         setAuthMessage(progressResult.error);
@@ -820,7 +1062,7 @@ export default function TodoeyPage() {
     return () => {
       isCancelled = true;
     };
-  }, [user]);
+  }, [syncRetryNonce, user]);
 
   useEffect(() => {
     const requestRetry = () => {
@@ -852,15 +1094,40 @@ export default function TodoeyPage() {
     }
 
     cloudTaskSaveTimerRef.current = setTimeout(() => {
-      const taskUpdatedAt = loadPendingSync(user.id).taskUpdatedAt;
+      const pendingSync = loadPendingSync(user.id);
+      const blockedTaskIds = new Set(taskConflicts.map((conflict) => conflict.id));
 
-      saveCloudTasks(user.id, tasks).then((error) => {
-        if (error) {
-          setAuthMessage(error);
+      if (!hasPendingTasks(pendingSync)) {
+        saveSyncBaseTasks(user.id, tasks);
+        return;
+      }
+
+      const taskUpdatedAt = pendingSync.taskUpdatedAt;
+
+      saveCloudTaskChanges(user.id, tasks, pendingSync, blockedTaskIds).then((result) => {
+        if (result.error) {
+          setAuthMessage(result.error);
           return;
         }
 
-        clearPendingTaskSync(user.id, taskUpdatedAt);
+        if (
+          result.savedTaskIds.length === 0 &&
+          result.savedDeletedTaskIds.length === 0
+        ) {
+          return;
+        }
+
+        clearPendingTaskSync(
+          user.id,
+          taskUpdatedAt,
+          result.savedTaskIds,
+          result.savedDeletedTaskIds
+        );
+
+        const nextPendingSync = loadPendingSync(user.id);
+        if (!hasPendingTasks(nextPendingSync) && taskConflicts.length === 0) {
+          saveSyncBaseTasks(user.id, tasks);
+        }
       });
     }, 500);
 
@@ -869,7 +1136,7 @@ export default function TodoeyPage() {
         clearTimeout(cloudTaskSaveTimerRef.current);
       }
     };
-  }, [cloudLoaded, syncRetryNonce, tasks, tasksLoaded, user]);
+  }, [cloudLoaded, syncRetryNonce, taskConflicts, tasks, tasksLoaded, user]);
 
   useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !dailyProgressLoaded) return;
@@ -980,6 +1247,45 @@ export default function TodoeyPage() {
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
   }, [tasks, editingTaskId]);
+
+  const activeTaskConflict = taskConflicts[0] ?? null;
+
+  function resolveTaskConflict(conflictId: string, choice: "local" | "cloud") {
+    const conflict = taskConflicts.find((item) => item.id === conflictId);
+    if (!conflict || !user) return;
+
+    const chosenTask = choice === "local" ? conflict.local : conflict.cloud;
+
+    if (choice === "local") {
+      saveSyncBaseTask(user.id, conflictId, conflict.cloud);
+
+      if (chosenTask) {
+        rememberTaskChange(conflictId);
+      } else {
+        rememberTaskDelete(conflictId);
+      }
+    } else {
+      clearPendingTaskDecision(user.id, conflictId);
+    }
+
+    setTasks((prev) => {
+      const withoutConflict = prev.filter((task) => task.id !== conflictId);
+      return chosenTask
+        ? sortTasksByDate([...withoutConflict, chosenTask])
+        : withoutConflict;
+    });
+
+    const remainingConflicts = taskConflicts.filter((item) => item.id !== conflictId);
+    setTaskConflicts(remainingConflicts);
+    setAuthMessage(
+      remainingConflicts.length > 0
+        ? `Sync needs a choice for ${remainingConflicts.length} task${
+            remainingConflicts.length === 1 ? "" : "s"
+          }.`
+        : ""
+    );
+    setSyncRetryNonce((current) => current + 1);
+  }
 
   async function submitAuth(mode: "sign-in" | "sign-up") {
     if (!supabase || authBusy) return;
@@ -1871,6 +2177,44 @@ export default function TodoeyPage() {
       fontWeight: 800,
       marginBottom: "14px",
     } as React.CSSProperties,
+    conflictText: {
+      color: "#d7d7dc",
+      fontSize: "14px",
+      lineHeight: 1.45,
+      marginBottom: "14px",
+    } as React.CSSProperties,
+    conflictChoices: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "10px",
+      marginTop: "12px",
+    } as React.CSSProperties,
+    conflictChoice: {
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      borderRadius: "14px",
+      padding: "12px",
+      color: "#ffffff",
+      textAlign: "left",
+      cursor: "pointer",
+    } as React.CSSProperties,
+    conflictChoiceTitle: {
+      fontSize: "14px",
+      fontWeight: 800,
+      marginBottom: "8px",
+    } as React.CSSProperties,
+    conflictTaskTitle: {
+      fontSize: "16px",
+      fontWeight: 800,
+      overflowWrap: "anywhere",
+      marginBottom: "6px",
+    } as React.CSSProperties,
+    conflictTaskMeta: {
+      color: "#aeb0b8",
+      fontSize: "12px",
+      fontWeight: 700,
+      lineHeight: 1.35,
+    } as React.CSSProperties,
     fieldGroup: {
       marginBottom: "12px",
     } as React.CSSProperties,
@@ -2329,6 +2673,45 @@ export default function TodoeyPage() {
             src={fullScreenImage}
             alt="Full size task attachment"
           />
+        </div>
+      ) : null}
+
+      {activeTaskConflict ? (
+        <div style={{ ...styles.modalOverlay, zIndex: 70 }}>
+          <div style={styles.modal}>
+            <div style={styles.modalTitle}>Sync conflict</div>
+            <div style={styles.conflictText}>
+              This task changed in two places before sync finished. Choose which version to keep.
+            </div>
+
+            <div style={styles.conflictChoices}>
+              <button
+                style={styles.conflictChoice}
+                onClick={() => resolveTaskConflict(activeTaskConflict.id, "local")}
+              >
+                <div style={styles.conflictChoiceTitle}>This device</div>
+                <div style={styles.conflictTaskTitle}>
+                  {taskConflictTitle(activeTaskConflict.local)}
+                </div>
+                <div style={styles.conflictTaskMeta}>
+                  {taskConflictDetails(activeTaskConflict.local)}
+                </div>
+              </button>
+
+              <button
+                style={styles.conflictChoice}
+                onClick={() => resolveTaskConflict(activeTaskConflict.id, "cloud")}
+              >
+                <div style={styles.conflictChoiceTitle}>Cloud version</div>
+                <div style={styles.conflictTaskTitle}>
+                  {taskConflictTitle(activeTaskConflict.cloud)}
+                </div>
+                <div style={styles.conflictTaskMeta}>
+                  {taskConflictDetails(activeTaskConflict.cloud)}
+                </div>
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
