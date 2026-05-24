@@ -25,10 +25,19 @@ type Task = {
 const STORAGE_KEY = "todoey-v1";
 const DAILY_PROGRESS_KEY = "todoey-daily-progress";
 const CLOUD_MIGRATION_KEY = "todoey-cloud-migrated";
+const PENDING_SYNC_KEY = "todoey-pending-sync-v1";
 
 type DailyProgress = {
   date: string;
   completedTodayCount: number;
+};
+
+type PendingSync = {
+  taskIds: string[];
+  deletedTaskIds: string[];
+  progressDates: string[];
+  taskUpdatedAt: string;
+  progressUpdatedAt: string;
 };
 
 type DbTask = {
@@ -178,6 +187,189 @@ function loadLocalTasks() {
   }
 }
 
+function normalizeDailyProgress(progress: Partial<DailyProgress> | null): DailyProgress | null {
+  if (!progress?.date) return null;
+
+  return {
+    date: String(progress.date),
+    completedTodayCount: Math.max(0, Number(progress.completedTodayCount ?? 0)),
+  };
+}
+
+function loadLocalDailyProgress() {
+  if (typeof window === "undefined") return null;
+
+  const saved = window.localStorage.getItem(DAILY_PROGRESS_KEY);
+  if (!saved) return null;
+
+  try {
+    return normalizeDailyProgress(JSON.parse(saved) as Partial<DailyProgress>);
+  } catch {
+    return null;
+  }
+}
+
+function pendingSyncKey(userId: string) {
+  return `${PENDING_SYNC_KEY}-${userId}`;
+}
+
+function emptyPendingSync(): PendingSync {
+  return {
+    taskIds: [],
+    deletedTaskIds: [],
+    progressDates: [],
+    taskUpdatedAt: "",
+    progressUpdatedAt: "",
+  };
+}
+
+function uniqueStrings(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => String(item)).filter(Boolean)));
+}
+
+function loadPendingSync(userId: string): PendingSync {
+  if (typeof window === "undefined") return emptyPendingSync();
+
+  const saved = window.localStorage.getItem(pendingSyncKey(userId));
+  if (!saved) return emptyPendingSync();
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<PendingSync>;
+
+    return {
+      taskIds: uniqueStrings(parsed.taskIds),
+      deletedTaskIds: uniqueStrings(parsed.deletedTaskIds),
+      progressDates: uniqueStrings(parsed.progressDates),
+      taskUpdatedAt: String(parsed.taskUpdatedAt ?? ""),
+      progressUpdatedAt: String(parsed.progressUpdatedAt ?? ""),
+    };
+  } catch {
+    return emptyPendingSync();
+  }
+}
+
+function savePendingSync(userId: string, pending: PendingSync) {
+  if (typeof window === "undefined") return;
+
+  const hasPending =
+    pending.taskIds.length > 0 ||
+    pending.deletedTaskIds.length > 0 ||
+    pending.progressDates.length > 0;
+
+  if (!hasPending) {
+    window.localStorage.removeItem(pendingSyncKey(userId));
+    return;
+  }
+
+  window.localStorage.setItem(pendingSyncKey(userId), JSON.stringify(pending));
+}
+
+function markPendingTaskChange(userId: string, taskId: string) {
+  const pending = loadPendingSync(userId);
+  const now = new Date().toISOString();
+
+  savePendingSync(userId, {
+    ...pending,
+    taskIds: Array.from(new Set([...pending.taskIds, taskId])),
+    deletedTaskIds: pending.deletedTaskIds.filter((id) => id !== taskId),
+    taskUpdatedAt: now,
+  });
+}
+
+function markPendingTaskDelete(userId: string, taskId: string) {
+  const pending = loadPendingSync(userId);
+  const now = new Date().toISOString();
+
+  savePendingSync(userId, {
+    ...pending,
+    taskIds: pending.taskIds.filter((id) => id !== taskId),
+    deletedTaskIds: Array.from(new Set([...pending.deletedTaskIds, taskId])),
+    taskUpdatedAt: now,
+  });
+}
+
+function markPendingProgressChange(userId: string, date: string) {
+  const pending = loadPendingSync(userId);
+  const now = new Date().toISOString();
+
+  savePendingSync(userId, {
+    ...pending,
+    progressDates: Array.from(new Set([...pending.progressDates, date])),
+    progressUpdatedAt: now,
+  });
+}
+
+function clearPendingTaskSync(userId: string, savedTaskUpdatedAt: string) {
+  if (!savedTaskUpdatedAt) return;
+
+  const pending = loadPendingSync(userId);
+  if (pending.taskUpdatedAt && pending.taskUpdatedAt !== savedTaskUpdatedAt) return;
+
+  savePendingSync(userId, {
+    ...pending,
+    taskIds: [],
+    deletedTaskIds: [],
+    taskUpdatedAt: "",
+  });
+}
+
+function clearPendingProgressSync(userId: string, savedProgressUpdatedAt: string) {
+  if (!savedProgressUpdatedAt) return;
+
+  const pending = loadPendingSync(userId);
+  if (
+    pending.progressUpdatedAt &&
+    pending.progressUpdatedAt !== savedProgressUpdatedAt
+  ) {
+    return;
+  }
+
+  savePendingSync(userId, {
+    ...pending,
+    progressDates: [],
+    progressUpdatedAt: "",
+  });
+}
+
+function hasPendingTasks(pending: PendingSync) {
+  return pending.taskIds.length > 0 || pending.deletedTaskIds.length > 0;
+}
+
+function hasPendingProgress(pending: PendingSync, progress: DailyProgress | null) {
+  return Boolean(progress && pending.progressDates.includes(progress.date));
+}
+
+function sortTasksByDate(tasks: Task[]) {
+  return [...tasks].sort((a, b) => {
+    const dueDiff = new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    if (dueDiff !== 0) return dueDiff;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+}
+
+function mergePendingTasks(
+  cloudTasks: Task[],
+  localTasks: Task[],
+  pending: PendingSync
+) {
+  const merged = new Map(cloudTasks.map((task) => [task.id, task]));
+  const localById = new Map(localTasks.map((task) => [task.id, task]));
+
+  pending.deletedTaskIds.forEach((id) => {
+    merged.delete(id);
+  });
+
+  pending.taskIds.forEach((id) => {
+    const localTask = localById.get(id);
+    if (localTask) {
+      merged.set(id, localTask);
+    }
+  });
+
+  return sortTasksByDate(Array.from(merged.values()));
+}
+
 function dbTaskToTask(task: DbTask): Task {
   return normalizeTask({
     id: task.id,
@@ -299,54 +491,65 @@ function useIsDesktop() {
 async function fetchCloudTasks(userId: string) {
   if (!supabase) return { tasks: [] as Task[], error: "Supabase is not configured." };
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .select("*")
-    .eq("user_id", userId)
-    .order("due_date", { ascending: true })
-    .order("created_at", { ascending: true });
+  try {
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("user_id", userId)
+      .order("due_date", { ascending: true })
+      .order("created_at", { ascending: true });
 
-  if (error) return { tasks: [] as Task[], error: error.message };
+    if (error) return { tasks: [] as Task[], error: error.message };
 
-  return {
-    tasks: ((data ?? []) as DbTask[]).map(dbTaskToTask),
-    error: "",
-  };
+    return {
+      tasks: ((data ?? []) as DbTask[]).map(dbTaskToTask),
+      error: "",
+    };
+  } catch (error) {
+    return {
+      tasks: [] as Task[],
+      error: error instanceof Error ? error.message : "Could not load tasks.",
+    };
+  }
 }
 
 async function saveCloudTasks(userId: string, tasks: Task[]) {
   if (!supabase) return "Supabase is not configured.";
 
-  const records = tasks.map((task) => taskToDbTask(task, userId));
+  try {
+    const records = tasks.map((task) => taskToDbTask(task, userId));
 
-  if (records.length > 0) {
-    const { error } = await supabase.from("tasks").upsert(records);
-    if (error) return error.message;
-  }
+    if (records.length > 0) {
+      const { error } = await supabase.from("tasks").upsert(records);
+      if (error) return error.message;
+    }
 
-  const { data: existingTasks, error: existingError } = await supabase
-    .from("tasks")
-    .select("id")
-    .eq("user_id", userId);
-
-  if (existingError) return existingError.message;
-
-  const nextIds = new Set(tasks.map((task) => task.id));
-  const idsToDelete = ((existingTasks ?? []) as { id: string }[])
-    .map((task) => task.id)
-    .filter((id) => !nextIds.has(id));
-
-  if (idsToDelete.length > 0) {
-    const { error } = await supabase
+    const { data: existingTasks, error: existingError } = await supabase
       .from("tasks")
-      .delete()
-      .eq("user_id", userId)
-      .in("id", idsToDelete);
+      .select("id")
+      .eq("user_id", userId);
 
-    if (error) return error.message;
+    if (existingError) return existingError.message;
+
+    const nextIds = new Set(tasks.map((task) => task.id));
+    const idsToDelete = ((existingTasks ?? []) as { id: string }[])
+      .map((task) => task.id)
+      .filter((id) => !nextIds.has(id));
+
+    if (idsToDelete.length > 0) {
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("user_id", userId)
+        .in("id", idsToDelete);
+
+      if (error) return error.message;
+    }
+
+    return "";
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not sync tasks.";
   }
-
-  return "";
 }
 
 async function fetchCloudDailyProgress(userId: string) {
@@ -354,37 +557,48 @@ async function fetchCloudDailyProgress(userId: string) {
     return { progress: null as DailyProgress | null, error: "Supabase is not configured." };
   }
 
-  const today = formatDateInput();
-  const { data, error } = await supabase
-    .from("daily_progress")
-    .select("date, completed_today_count")
-    .eq("user_id", userId)
-    .eq("date", today)
-    .maybeSingle();
+  try {
+    const today = formatDateInput();
+    const { data, error } = await supabase
+      .from("daily_progress")
+      .select("date, completed_today_count")
+      .eq("user_id", userId)
+      .eq("date", today)
+      .maybeSingle();
 
-  if (error) return { progress: null, error: error.message };
+    if (error) return { progress: null, error: error.message };
 
-  return {
-    progress: data
-      ? {
-          date: String(data.date),
-          completedTodayCount: Math.max(0, Number(data.completed_today_count ?? 0)),
-        }
-      : null,
-    error: "",
-  };
+    return {
+      progress: data
+        ? {
+            date: String(data.date),
+            completedTodayCount: Math.max(0, Number(data.completed_today_count ?? 0)),
+          }
+        : null,
+      error: "",
+    };
+  } catch (error) {
+    return {
+      progress: null,
+      error: error instanceof Error ? error.message : "Could not load progress.",
+    };
+  }
 }
 
 async function saveCloudDailyProgress(userId: string, progress: DailyProgress) {
   if (!supabase) return "Supabase is not configured.";
 
-  const { error } = await supabase.from("daily_progress").upsert({
-    user_id: userId,
-    date: progress.date,
-    completed_today_count: Math.max(0, progress.completedTodayCount),
-  });
+  try {
+    const { error } = await supabase.from("daily_progress").upsert({
+      user_id: userId,
+      date: progress.date,
+      completed_today_count: Math.max(0, progress.completedTodayCount),
+    });
 
-  return error?.message ?? "";
+    return error?.message ?? "";
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not sync progress.";
+  }
 }
 
 export default function TodoeyPage() {
@@ -426,9 +640,25 @@ export default function TodoeyPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
   const [fullScreenImage, setFullScreenImage] = useState("");
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function rememberTaskChange(taskId: string) {
+    if (!user) return;
+    markPendingTaskChange(user.id, taskId);
+  }
+
+  function rememberTaskDelete(taskId: string) {
+    if (!user) return;
+    markPendingTaskDelete(user.id, taskId);
+  }
+
+  function rememberProgressChange(date = formatDateInput()) {
+    if (!user) return;
+    markPendingProgressChange(user.id, date);
+  }
 
   const clearEditState = React.useCallback(() => {
     setEditingTaskId(null);
@@ -468,33 +698,19 @@ export default function TodoeyPage() {
   }, [dailyProgress, dailyProgressLoaded]);
 
   useEffect(() => {
-    const savedProgress =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(DAILY_PROGRESS_KEY)
-        : null;
+    const savedProgress = loadLocalDailyProgress();
 
     if (savedProgress) {
-      try {
-        const parsedProgress = JSON.parse(savedProgress) as Partial<DailyProgress>;
-        const today = formatDateInput();
+      const today = formatDateInput();
 
-        if (parsedProgress.date === today) {
-          window.setTimeout(() => {
-            setDailyProgress({
-              date: today,
-              completedTodayCount: Math.max(0, Number(parsedProgress.completedTodayCount ?? 0)),
-            });
-            setDailyProgressLoaded(true);
-          }, 0);
-        } else {
-          window.setTimeout(() => {
-            setDailyProgress({ date: today, completedTodayCount: 0 });
-            setDailyProgressLoaded(true);
-          }, 0);
-        }
-      } catch {
+      if (savedProgress.date === today) {
         window.setTimeout(() => {
-          setDailyProgress({ date: formatDateInput(), completedTodayCount: 0 });
+          setDailyProgress(savedProgress);
+          setDailyProgressLoaded(true);
+        }, 0);
+      } else {
+        window.setTimeout(() => {
+          setDailyProgress({ date: today, completedTodayCount: 0 });
           setDailyProgressLoaded(true);
         }, 0);
       }
@@ -557,10 +773,16 @@ export default function TodoeyPage() {
         return;
       }
 
-      let nextTasks = cloudTasks;
+      const pendingSync = loadPendingSync(user!.id);
       const localTasks = loadLocalTasks();
+      const localProgress = loadLocalDailyProgress();
+      const hasPendingTaskChanges = hasPendingTasks(pendingSync);
+      let nextTasks = hasPendingTaskChanges
+        ? mergePendingTasks(cloudTasks, localTasks, pendingSync)
+        : cloudTasks;
       const migrationKey = `${CLOUD_MIGRATION_KEY}-${user!.id}`;
       const shouldMigrateLocalTasks =
+        !hasPendingTaskChanges &&
         cloudTasks.length === 0 &&
         localTasks.length > 0 &&
         typeof window !== "undefined" &&
@@ -584,6 +806,8 @@ export default function TodoeyPage() {
 
       if (progressResult.error) {
         setAuthMessage(progressResult.error);
+      } else if (hasPendingProgress(pendingSync, localProgress)) {
+        setDailyProgress(localProgress!);
       } else if (progressResult.progress) {
         setDailyProgress(progressResult.progress);
       }
@@ -599,6 +823,28 @@ export default function TodoeyPage() {
   }, [user]);
 
   useEffect(() => {
+    const requestRetry = () => {
+      setSyncRetryNonce((current) => current + 1);
+    };
+
+    const requestVisibleRetry = () => {
+      if (document.visibilityState === "visible") {
+        requestRetry();
+      }
+    };
+
+    window.addEventListener("online", requestRetry);
+    window.addEventListener("focus", requestRetry);
+    document.addEventListener("visibilitychange", requestVisibleRetry);
+
+    return () => {
+      window.removeEventListener("online", requestRetry);
+      window.removeEventListener("focus", requestRetry);
+      document.removeEventListener("visibilitychange", requestVisibleRetry);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
 
     if (cloudTaskSaveTimerRef.current) {
@@ -606,8 +852,15 @@ export default function TodoeyPage() {
     }
 
     cloudTaskSaveTimerRef.current = setTimeout(() => {
+      const taskUpdatedAt = loadPendingSync(user.id).taskUpdatedAt;
+
       saveCloudTasks(user.id, tasks).then((error) => {
-        if (error) setAuthMessage(error);
+        if (error) {
+          setAuthMessage(error);
+          return;
+        }
+
+        clearPendingTaskSync(user.id, taskUpdatedAt);
       });
     }, 500);
 
@@ -616,7 +869,7 @@ export default function TodoeyPage() {
         clearTimeout(cloudTaskSaveTimerRef.current);
       }
     };
-  }, [cloudLoaded, tasks, tasksLoaded, user]);
+  }, [cloudLoaded, syncRetryNonce, tasks, tasksLoaded, user]);
 
   useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !dailyProgressLoaded) return;
@@ -626,10 +879,15 @@ export default function TodoeyPage() {
     }
 
     cloudProgressSaveTimerRef.current = setTimeout(() => {
+      const progressUpdatedAt = loadPendingSync(user.id).progressUpdatedAt;
+
       saveCloudDailyProgress(user.id, dailyProgress).then((error) => {
         if (error) {
           setAuthMessage(error);
+          return;
         }
+
+        clearPendingProgressSync(user.id, progressUpdatedAt);
       });
     }, 500);
 
@@ -638,7 +896,7 @@ export default function TodoeyPage() {
         clearTimeout(cloudProgressSaveTimerRef.current);
       }
     };
-  }, [cloudLoaded, dailyProgress, dailyProgressLoaded, user]);
+  }, [cloudLoaded, dailyProgress, dailyProgressLoaded, syncRetryNonce, user]);
 
   useEffect(() => {
     taskInputRef.current?.focus();
@@ -812,6 +1070,7 @@ export default function TodoeyPage() {
       createdAt: new Date().toISOString(),
     };
 
+    rememberTaskChange(newTask.id);
     setTasks((prev) => [...prev, newTask]);
     resetNewTaskInputs();
 
@@ -878,6 +1137,7 @@ export default function TodoeyPage() {
     const rotationTitles =
       editRecurrence === "none" ? [] : normalizeRotationTitles(editRotationText);
 
+    rememberTaskChange(taskIdToSave);
     setTasks((prev) =>
       prev.map((task) =>
         task.id === taskIdToSave
@@ -926,6 +1186,9 @@ export default function TodoeyPage() {
       setCompletingTaskIds((prev) => [...prev, id]);
 
       window.setTimeout(() => {
+        rememberTaskChange(id);
+        rememberProgressChange();
+
         setTasks((prev) =>
           prev.map((task) => {
             if (task.id !== id) return task;
@@ -980,6 +1243,7 @@ export default function TodoeyPage() {
     setTasks((prev) =>
       prev.map((task) => (task.id === id ? { ...task, done: false } : task))
     );
+    rememberTaskChange(id);
 
     if (lastCompletedTaskId === id) {
       setLastCompletedTaskId(null);
@@ -997,12 +1261,15 @@ export default function TodoeyPage() {
       clearEditState();
     }
 
+    rememberTaskDelete(task.id);
     setTasks((prev) => prev.filter((item) => item.id !== task.id));
   }
 
   function undoLastComplete() {
     if (!lastCompletedTaskId) return;
 
+    rememberTaskChange(lastCompletedTaskId);
+    rememberProgressChange();
     setTasks((prev) =>
       prev.map((task) =>
         task.id === lastCompletedTaskId ? { ...task, done: false } : task
