@@ -49,6 +49,16 @@ for each row execute function public.set_updated_at();
 alter table public.tasks enable row level security;
 alter table public.daily_progress enable row level security;
 
+grant usage on schema public to authenticated;
+
+grant select, insert, update, delete
+on table public.tasks
+to authenticated;
+
+grant select, insert, update, delete
+on table public.daily_progress
+to authenticated;
+
 drop policy if exists "Users can read own tasks" on public.tasks;
 create policy "Users can read own tasks"
 on public.tasks for select
