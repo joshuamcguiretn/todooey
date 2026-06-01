@@ -4,7 +4,7 @@ create table if not exists public.tasks (
   title text not null default '',
   due_date date not null default current_date,
   priority smallint not null default 2 check (priority in (1, 2)),
-  recurrence text not null default 'none' check (recurrence in ('none', 'daily', 'weekly', 'monthly')),
+  recurrence text not null default 'none' check (recurrence in ('none', 'daily', 'weekly', 'monthly', 'fibonacci')),
   recurrence_interval integer not null default 1 check (recurrence_interval >= 1),
   rotation_titles text[] not null default '{}',
   rotation_title_index integer not null default 0 check (rotation_title_index >= 0),
@@ -25,6 +25,13 @@ create table if not exists public.daily_progress (
 
 create index if not exists tasks_user_due_idx on public.tasks (user_id, due_date);
 create index if not exists tasks_user_recurrence_idx on public.tasks (user_id, recurrence);
+
+alter table public.tasks
+drop constraint if exists tasks_recurrence_check;
+
+alter table public.tasks
+add constraint tasks_recurrence_check
+check (recurrence in ('none', 'daily', 'weekly', 'monthly', 'fibonacci'));
 
 create or replace function public.set_updated_at()
 returns trigger

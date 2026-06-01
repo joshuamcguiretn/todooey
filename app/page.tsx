@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type Priority = 1 | 2;
-type Recurrence = "none" | "daily" | "weekly" | "monthly";
+type Recurrence = "none" | "daily" | "weekly" | "monthly" | "fibonacci";
 
 type Task = {
   id: string;
@@ -178,7 +178,12 @@ function normalizeRotationIndex(value: unknown, titles: string[], currentTitle: 
 }
 
 function normalizeRecurrence(value: unknown): Recurrence {
-  if (value === "daily" || value === "weekly" || value === "monthly") {
+  if (
+    value === "daily" ||
+    value === "weekly" ||
+    value === "monthly" ||
+    value === "fibonacci"
+  ) {
     return value;
   }
 
@@ -567,6 +572,28 @@ function taskToDbTask(task: Task, userId: string) {
   };
 }
 
+function dateFromInput(dateInput: string) {
+  const [year, month, day] = dateInput.split("-").map(Number);
+  if (!year || !month || !day) return startOfDay(new Date());
+  return startOfDay(new Date(year, month - 1, day));
+}
+
+function fibonacciDays(stepInput: unknown) {
+  const step = normalizeInterval(stepInput);
+  let previous = 1;
+  let current = 1;
+
+  if (step <= 2) return 1;
+
+  for (let index = 3; index <= step; index++) {
+    const next = previous + current;
+    previous = current;
+    current = next;
+  }
+
+  return current;
+}
+
 function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
   const interval = normalizeInterval(intervalInput);
   if (recurrence === "daily") return interval === 1 ? "day" : "days";
@@ -577,6 +604,10 @@ function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
 
 function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
   if (recurrence === "none") return "One-time task";
+  if (recurrence === "fibonacci") {
+    const days = fibonacciDays(intervalInput);
+    return `Fibonacci: next in ${days} ${days === 1 ? "day" : "days"}`;
+  }
 
   const interval = normalizeInterval(intervalInput);
   const unit = recurrenceUnit(recurrence, interval);
@@ -584,19 +615,37 @@ function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
   return `Every ${interval} ${unit}`;
 }
 
-function advanceRecurringDate(recurrence: Recurrence, intervalInput: unknown) {
+function advanceRecurringDate(
+  dueDate: string,
+  recurrence: Recurrence,
+  intervalInput: unknown
+) {
   const interval = normalizeInterval(intervalInput);
-  const next = startOfDay(new Date());
+  const today = startOfDay(new Date());
+  const next = recurrence === "fibonacci" ? new Date(today) : dateFromInput(dueDate);
 
   if (recurrence === "daily") {
-    next.setDate(next.getDate() + interval);
+    do {
+      next.setDate(next.getDate() + interval);
+    } while (next <= today);
   } else if (recurrence === "weekly") {
-    next.setDate(next.getDate() + interval * 7);
+    do {
+      next.setDate(next.getDate() + interval * 7);
+    } while (next <= today);
   } else if (recurrence === "monthly") {
-    next.setMonth(next.getMonth() + interval);
+    do {
+      next.setMonth(next.getMonth() + interval);
+    } while (next <= today);
+  } else if (recurrence === "fibonacci") {
+    next.setDate(next.getDate() + fibonacciDays(interval));
   }
 
   return formatDateInput(next);
+}
+
+function nextRecurrenceInterval(recurrence: Recurrence, intervalInput: unknown) {
+  const interval = normalizeInterval(intervalInput);
+  return recurrence === "fibonacci" ? interval + 1 : interval;
 }
 
 function compressImage(file: File): Promise<string> {
@@ -1486,7 +1535,8 @@ export default function TodoeyPage() {
     const isRecurring =
       taskToComplete.recurrence === "daily" ||
       taskToComplete.recurrence === "weekly" ||
-      taskToComplete.recurrence === "monthly";
+      taskToComplete.recurrence === "monthly" ||
+      taskToComplete.recurrence === "fibonacci";
 
     if (!taskToComplete.done) {
       setCompletingTaskIds((prev) => [...prev, id]);
@@ -1515,7 +1565,15 @@ export default function TodoeyPage() {
               return {
                 ...task,
                 title: rotationTitles[nextRotationTitleIndex] ?? task.title,
-                dueDate: advanceRecurringDate(task.recurrence, task.recurrenceInterval),
+                dueDate: advanceRecurringDate(
+                  task.dueDate,
+                  task.recurrence,
+                  task.recurrenceInterval
+                ),
+                recurrenceInterval: nextRecurrenceInterval(
+                  task.recurrence,
+                  task.recurrenceInterval
+                ),
                 rotationTitles,
                 rotationTitleIndex: nextRotationTitleIndex,
                 done: false,
@@ -2481,24 +2539,40 @@ export default function TodoeyPage() {
                   >
                     Monthly
                   </button>
-                  <div style={styles.intervalControl}>
-                    Every
-                    <input
-                      style={styles.intervalInput}
-                      type="number"
-                      min={1}
-                      value={recurrenceInterval}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "") {
-                          setRecurrenceInterval("");
-                        } else {
-                          setRecurrenceInterval(Number(val));
-                        }
-                      }}
-                    />
-                    {recurrenceUnit(recurrence, recurrenceInterval)}
-                  </div>
+                  <button
+                    style={recurrence === "fibonacci" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => {
+                      setRecurrence("fibonacci");
+                      setRecurrenceInterval(1);
+                    }}
+                  >
+                    Fibonacci
+                  </button>
+                  {recurrence !== "fibonacci" ? (
+                    <div style={styles.intervalControl}>
+                      Every
+                      <input
+                        style={styles.intervalInput}
+                        type="number"
+                        min={1}
+                        value={recurrenceInterval}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "") {
+                            setRecurrenceInterval("");
+                          } else {
+                            setRecurrenceInterval(Number(val));
+                          }
+                        }}
+                      />
+                      {recurrenceUnit(recurrence, recurrenceInterval)}
+                    </div>
+                  ) : (
+                    <div style={styles.intervalControl}>
+                      Next: {fibonacciDays(recurrenceInterval)}{" "}
+                      {fibonacciDays(recurrenceInterval) === 1 ? "day" : "days"}
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.fieldGroup}>
@@ -2776,24 +2850,40 @@ export default function TodoeyPage() {
                   >
                     Monthly
                   </button>
-                  <div style={styles.intervalControl}>
-                    Every
-                    <input
-                      style={styles.intervalInput}
-                      type="number"
-                      min={1}
-                      value={editRecurrenceInterval}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "") {
-                          setEditRecurrenceInterval("");
-                        } else {
-                          setEditRecurrenceInterval(Number(val));
-                        }
-                      }}
-                    />
-                    {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
-                  </div>
+                  <button
+                    style={editRecurrence === "fibonacci" ? styles.recurrenceChipActive : styles.recurrenceChip}
+                    onClick={() => {
+                      setEditRecurrence("fibonacci");
+                      setEditRecurrenceInterval(1);
+                    }}
+                  >
+                    Fibonacci
+                  </button>
+                  {editRecurrence !== "fibonacci" ? (
+                    <div style={styles.intervalControl}>
+                      Every
+                      <input
+                        style={styles.intervalInput}
+                        type="number"
+                        min={1}
+                        value={editRecurrenceInterval}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "") {
+                            setEditRecurrenceInterval("");
+                          } else {
+                            setEditRecurrenceInterval(Number(val));
+                          }
+                        }}
+                      />
+                      {recurrenceUnit(editRecurrence, editRecurrenceInterval)}
+                    </div>
+                  ) : (
+                    <div style={styles.intervalControl}>
+                      Next: {fibonacciDays(editRecurrenceInterval)}{" "}
+                      {fibonacciDays(editRecurrenceInterval) === 1 ? "day" : "days"}
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.fieldGroup}>
