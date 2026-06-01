@@ -14,6 +14,7 @@ type Task = {
   priority: Priority;
   recurrence: Recurrence;
   recurrenceInterval: number;
+  recurrenceAnchored: boolean;
   rotationTitles: string[];
   rotationTitleIndex: number;
   description: string;
@@ -66,6 +67,7 @@ type DbTask = {
   priority: Priority;
   recurrence: Recurrence;
   recurrence_interval: number;
+  recurrence_anchored: boolean | null;
   rotation_titles: string[] | null;
   rotation_title_index: number | null;
   description: string | null;
@@ -201,6 +203,10 @@ function normalizeTask(task: Partial<Task>): Task {
     priority: task.priority === 1 ? 1 : 2,
     recurrence: normalizeRecurrence(task.recurrence),
     recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
+    recurrenceAnchored:
+      typeof task.recurrenceAnchored === "boolean"
+        ? task.recurrenceAnchored
+        : normalizeRecurrence(task.recurrence) !== "none",
     rotationTitles,
     rotationTitleIndex: normalizeRotationIndex(
       task.rotationTitleIndex,
@@ -459,6 +465,7 @@ function taskSignature(task: Task | null) {
     priority: task.priority,
     recurrence: task.recurrence,
     recurrenceInterval: normalizeInterval(task.recurrenceInterval),
+    recurrenceAnchored: task.recurrenceAnchored,
     rotationTitles: task.rotationTitles,
     rotationTitleIndex: task.rotationTitleIndex,
     description: task.description,
@@ -545,6 +552,7 @@ function dbTaskToTask(task: DbTask): Task {
     priority: task.priority === 1 ? 1 : 2,
     recurrence: normalizeRecurrence(task.recurrence),
     recurrenceInterval: task.recurrence_interval,
+    recurrenceAnchored: task.recurrence_anchored ?? true,
     rotationTitles: task.rotation_titles ?? [],
     rotationTitleIndex: task.rotation_title_index ?? 0,
     description: task.description ?? "",
@@ -554,8 +562,8 @@ function dbTaskToTask(task: DbTask): Task {
   });
 }
 
-function taskToDbTask(task: Task, userId: string) {
-  return {
+function taskToDbTask(task: Task, userId: string, includeRecurrenceAnchor = true) {
+  const record = {
     id: task.id,
     user_id: userId,
     title: task.title,
@@ -570,6 +578,28 @@ function taskToDbTask(task: Task, userId: string) {
     done: task.done,
     created_at: task.createdAt,
   };
+
+  return includeRecurrenceAnchor
+    ? { ...record, recurrence_anchored: task.recurrenceAnchored }
+    : record;
+}
+
+function isMissingRecurrenceAnchorError(message: string) {
+  return message.includes("recurrence_anchored");
+}
+
+async function upsertTaskRecords(userId: string, tasks: Task[]) {
+  if (!supabase || tasks.length === 0) return "";
+
+  const records = tasks.map((task) => taskToDbTask(task, userId));
+  const { error } = await supabase.from("tasks").upsert(records);
+
+  if (!error) return "";
+  if (!isMissingRecurrenceAnchorError(error.message)) return error.message;
+
+  const fallbackRecords = tasks.map((task) => taskToDbTask(task, userId, false));
+  const fallbackResult = await supabase.from("tasks").upsert(fallbackRecords);
+  return fallbackResult.error?.message ?? "";
 }
 
 function dateFromInput(dateInput: string) {
@@ -618,24 +648,40 @@ function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
 function advanceRecurringDate(
   dueDate: string,
   recurrence: Recurrence,
-  intervalInput: unknown
+  intervalInput: unknown,
+  recurrenceAnchored: boolean
 ) {
   const interval = normalizeInterval(intervalInput);
   const today = startOfDay(new Date());
-  const next = recurrence === "fibonacci" ? new Date(today) : dateFromInput(dueDate);
+  const next =
+    recurrence === "fibonacci" || !recurrenceAnchored
+      ? new Date(today)
+      : dateFromInput(dueDate);
 
   if (recurrence === "daily") {
-    do {
+    if (recurrenceAnchored) {
+      do {
+        next.setDate(next.getDate() + interval);
+      } while (next <= today);
+    } else {
       next.setDate(next.getDate() + interval);
-    } while (next <= today);
+    }
   } else if (recurrence === "weekly") {
-    do {
+    if (recurrenceAnchored) {
+      do {
+        next.setDate(next.getDate() + interval * 7);
+      } while (next <= today);
+    } else {
       next.setDate(next.getDate() + interval * 7);
-    } while (next <= today);
+    }
   } else if (recurrence === "monthly") {
-    do {
+    if (recurrenceAnchored) {
+      do {
+        next.setMonth(next.getMonth() + interval);
+      } while (next <= today);
+    } else {
       next.setMonth(next.getMonth() + interval);
-    } while (next <= today);
+    }
   } else if (recurrence === "fibonacci") {
     next.setDate(next.getDate() + fibonacciDays(interval));
   }
@@ -728,12 +774,8 @@ async function saveCloudTasks(userId: string, tasks: Task[]) {
   if (!supabase) return "Supabase is not configured.";
 
   try {
-    const records = tasks.map((task) => taskToDbTask(task, userId));
-
-    if (records.length > 0) {
-      const { error } = await supabase.from("tasks").upsert(records);
-      if (error) return error.message;
-    }
+    const upsertError = await upsertTaskRecords(userId, tasks);
+    if (upsertError) return upsertError;
 
     const { data: existingTasks, error: existingError } = await supabase
       .from("tasks")
@@ -792,13 +834,12 @@ async function saveCloudTaskChanges(
   try {
     const records = taskIdsToSave
       .map((id) => tasksById.get(id))
-      .filter((task): task is Task => Boolean(task))
-      .map((task) => taskToDbTask(task, userId));
+      .filter((task): task is Task => Boolean(task));
 
     if (records.length > 0) {
-      const { error } = await supabase.from("tasks").upsert(records);
-      if (error) {
-        return { error: error.message, savedTaskIds: [], savedDeletedTaskIds: [] };
+      const upsertError = await upsertTaskRecords(userId, records);
+      if (upsertError) {
+        return { error: upsertError, savedTaskIds: [], savedDeletedTaskIds: [] };
       }
     }
 
@@ -893,6 +934,7 @@ export default function TodoeyPage() {
   const [priority, setPriority] = useState<Priority>(2);
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
+  const [recurrenceAnchored, setRecurrenceAnchored] = useState(false);
   const [rotationText, setRotationText] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newImageDataUrl, setNewImageDataUrl] = useState("");
@@ -912,6 +954,7 @@ export default function TodoeyPage() {
   const [editPriority, setEditPriority] = useState<Priority>(2);
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
+  const [editRecurrenceAnchored, setEditRecurrenceAnchored] = useState(false);
   const [editRotationText, setEditRotationText] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
@@ -944,6 +987,7 @@ export default function TodoeyPage() {
     setEditPriority(2);
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
+    setEditRecurrenceAnchored(false);
     setEditRotationText("");
     setEditDescription("");
     setEditImageDataUrl("");
@@ -1399,6 +1443,7 @@ export default function TodoeyPage() {
     setPriority(2);
     setRecurrence("none");
     setRecurrenceInterval(1);
+    setRecurrenceAnchored(false);
     setRotationText("");
     setNewDescription("");
     setNewImageDataUrl("");
@@ -1417,6 +1462,7 @@ export default function TodoeyPage() {
       priority,
       recurrence,
       recurrenceInterval: normalizeInterval(recurrenceInterval),
+      recurrenceAnchored: recurrence !== "fibonacci" && recurrenceAnchored,
       rotationTitles,
       rotationTitleIndex: 0,
       description: newDescription.trim(),
@@ -1447,6 +1493,7 @@ export default function TodoeyPage() {
     setEditPriority(task.priority);
     setEditRecurrence(task.recurrence);
     setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
+    setEditRecurrenceAnchored(task.recurrence !== "fibonacci" && task.recurrenceAnchored);
     setEditRotationText((task.rotationTitles ?? []).join("\n"));
     setEditDescription(task.description ?? "");
     setEditImageDataUrl(task.imageDataUrl ?? "");
@@ -1510,6 +1557,8 @@ export default function TodoeyPage() {
                 priority: editPriority,
                 recurrence: editRecurrence,
                 recurrenceInterval: normalizeInterval(editRecurrenceInterval),
+                recurrenceAnchored:
+                  editRecurrence !== "fibonacci" && editRecurrenceAnchored,
                 rotationTitles,
                 rotationTitleIndex,
                 description: editDescription.trim(),
@@ -1568,7 +1617,8 @@ export default function TodoeyPage() {
                 dueDate: advanceRecurringDate(
                   task.dueDate,
                   task.recurrence,
-                  task.recurrenceInterval
+                  task.recurrenceInterval,
+                  task.recurrenceAnchored
                 ),
                 recurrenceInterval: nextRecurrenceInterval(
                   task.recurrence,
@@ -2479,7 +2529,12 @@ export default function TodoeyPage() {
                 style={styles.input}
                 type="date"
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
+                onChange={(e) => {
+                  setDueDate(e.target.value);
+                  if (recurrence !== "none" && recurrence !== "fibonacci") {
+                    setRecurrenceAnchored(true);
+                  }
+                }}
               />
               <button
                 style={priority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
@@ -2544,10 +2599,19 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setRecurrence("fibonacci");
                       setRecurrenceInterval(1);
+                      setRecurrenceAnchored(false);
                     }}
                   >
                     Fibonacci
                   </button>
+                  {recurrence !== "fibonacci" ? (
+                    <button
+                      style={recurrenceAnchored ? styles.recurrenceChipActive : styles.recurrenceChip}
+                      onClick={() => setRecurrenceAnchored((prev) => !prev)}
+                    >
+                      Date anchor
+                    </button>
+                  ) : null}
                   {recurrence !== "fibonacci" ? (
                     <div style={styles.intervalControl}>
                       Every
@@ -2808,7 +2872,12 @@ export default function TodoeyPage() {
                   style={styles.input}
                   type="date"
                   value={editDueDate}
-                  onChange={(e) => setEditDueDate(e.target.value)}
+                  onChange={(e) => {
+                    setEditDueDate(e.target.value);
+                    if (editRecurrence !== "none" && editRecurrence !== "fibonacci") {
+                      setEditRecurrenceAnchored(true);
+                    }
+                  }}
                 />
                 <button
                   style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
@@ -2855,10 +2924,19 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setEditRecurrence("fibonacci");
                       setEditRecurrenceInterval(1);
+                      setEditRecurrenceAnchored(false);
                     }}
                   >
                     Fibonacci
                   </button>
+                  {editRecurrence !== "fibonacci" ? (
+                    <button
+                      style={editRecurrenceAnchored ? styles.recurrenceChipActive : styles.recurrenceChip}
+                      onClick={() => setEditRecurrenceAnchored((prev) => !prev)}
+                    >
+                      Date anchor
+                    </button>
+                  ) : null}
                   {editRecurrence !== "fibonacci" ? (
                     <div style={styles.intervalControl}>
                       Every

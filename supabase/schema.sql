@@ -6,6 +6,7 @@ create table if not exists public.tasks (
   priority smallint not null default 2 check (priority in (1, 2)),
   recurrence text not null default 'none' check (recurrence in ('none', 'daily', 'weekly', 'monthly', 'fibonacci')),
   recurrence_interval integer not null default 1 check (recurrence_interval >= 1),
+  recurrence_anchored boolean not null default true,
   rotation_titles text[] not null default '{}',
   rotation_title_index integer not null default 0 check (rotation_title_index >= 0),
   description text not null default '',
@@ -25,6 +26,9 @@ create table if not exists public.daily_progress (
 
 create index if not exists tasks_user_due_idx on public.tasks (user_id, due_date);
 create index if not exists tasks_user_recurrence_idx on public.tasks (user_id, recurrence);
+
+alter table public.tasks
+add column if not exists recurrence_anchored boolean not null default true;
 
 alter table public.tasks
 drop constraint if exists tasks_recurrence_check;
