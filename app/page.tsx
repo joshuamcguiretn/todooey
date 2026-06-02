@@ -6,6 +6,16 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type Priority = 1 | 2;
 type Recurrence = "none" | "daily" | "weekly" | "monthly" | "fibonacci";
+const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 type Task = {
   id: string;
@@ -608,6 +618,17 @@ function dateFromInput(dateInput: string) {
   return startOfDay(new Date(year, month - 1, day));
 }
 
+function weekdayFromDateInput(dateInput: string) {
+  return dateFromInput(dateInput).getDay();
+}
+
+function dateForNextWeekday(dayIndex: number) {
+  const next = startOfDay(new Date());
+  const daysUntil = (dayIndex - next.getDay() + 7) % 7;
+  next.setDate(next.getDate() + daysUntil);
+  return formatDateInput(next);
+}
+
 function fibonacciDays(stepInput: unknown) {
   const step = normalizeInterval(stepInput);
   let previous = 1;
@@ -935,6 +956,7 @@ export default function TodoeyPage() {
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
   const [recurrenceAnchored, setRecurrenceAnchored] = useState(false);
+  const [showRotationNames, setShowRotationNames] = useState(false);
   const [rotationText, setRotationText] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newImageDataUrl, setNewImageDataUrl] = useState("");
@@ -955,6 +977,7 @@ export default function TodoeyPage() {
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
   const [editRecurrenceAnchored, setEditRecurrenceAnchored] = useState(false);
+  const [showEditRotationNames, setShowEditRotationNames] = useState(false);
   const [editRotationText, setEditRotationText] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
@@ -988,6 +1011,7 @@ export default function TodoeyPage() {
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
     setEditRecurrenceAnchored(false);
+    setShowEditRotationNames(false);
     setEditRotationText("");
     setEditDescription("");
     setEditImageDataUrl("");
@@ -1343,6 +1367,38 @@ export default function TodoeyPage() {
 
   const activeTaskConflict = taskConflicts[0] ?? null;
 
+  function toggleWeeklyAnchor(dayIndex: number) {
+    const isSelected =
+      recurrence === "weekly" &&
+      recurrenceAnchored &&
+      weekdayFromDateInput(dueDate) === dayIndex;
+
+    if (isSelected) {
+      setRecurrenceAnchored(false);
+      return;
+    }
+
+    setRecurrence("weekly");
+    setRecurrenceAnchored(true);
+    setDueDate(dateForNextWeekday(dayIndex));
+  }
+
+  function toggleEditWeeklyAnchor(dayIndex: number) {
+    const isSelected =
+      editRecurrence === "weekly" &&
+      editRecurrenceAnchored &&
+      weekdayFromDateInput(editDueDate) === dayIndex;
+
+    if (isSelected) {
+      setEditRecurrenceAnchored(false);
+      return;
+    }
+
+    setEditRecurrence("weekly");
+    setEditRecurrenceAnchored(true);
+    setEditDueDate(dateForNextWeekday(dayIndex));
+  }
+
   function resolveTaskConflict(conflictId: string, choice: "local" | "cloud") {
     const conflict = taskConflicts.find((item) => item.id === conflictId);
     if (!conflict || !user) return;
@@ -1444,6 +1500,7 @@ export default function TodoeyPage() {
     setRecurrence("none");
     setRecurrenceInterval(1);
     setRecurrenceAnchored(false);
+    setShowRotationNames(false);
     setRotationText("");
     setNewDescription("");
     setNewImageDataUrl("");
@@ -1494,6 +1551,7 @@ export default function TodoeyPage() {
     setEditRecurrence(task.recurrence);
     setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
     setEditRecurrenceAnchored(task.recurrence !== "fibonacci" && task.recurrenceAnchored);
+    setShowEditRotationNames((task.rotationTitles ?? []).length > 0);
     setEditRotationText((task.rotationTitles ?? []).join("\n"));
     setEditDescription(task.description ?? "");
     setEditImageDataUrl(task.imageDataUrl ?? "");
@@ -2007,6 +2065,32 @@ export default function TodoeyPage() {
       color: "#ffffff",
       fontSize: "14px",
       fontWeight: 700,
+      cursor: "pointer",
+    } as React.CSSProperties,
+    weekdayPicker: {
+      width: "100%",
+      display: "grid",
+      gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+      gap: "6px",
+    } as React.CSSProperties,
+    weekdayButton: {
+      height: "38px",
+      borderRadius: "999px",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      color: "#cfcfd6",
+      fontSize: "14px",
+      fontWeight: 800,
+      cursor: "pointer",
+    } as React.CSSProperties,
+    weekdayButtonActive: {
+      height: "38px",
+      borderRadius: "999px",
+      border: "1px solid #6d28d9",
+      background: "#1b1525",
+      color: "#ffffff",
+      fontSize: "14px",
+      fontWeight: 800,
       cursor: "pointer",
     } as React.CSSProperties,
     intervalControl: {
@@ -2529,12 +2613,7 @@ export default function TodoeyPage() {
                 style={styles.input}
                 type="date"
                 value={dueDate}
-                onChange={(e) => {
-                  setDueDate(e.target.value);
-                  if (recurrence !== "none" && recurrence !== "fibonacci") {
-                    setRecurrenceAnchored(true);
-                  }
-                }}
+                onChange={(e) => setDueDate(e.target.value)}
               />
               <button
                 style={priority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
@@ -2546,7 +2625,15 @@ export default function TodoeyPage() {
               </button>
               <button
                 style={recurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
-                onClick={() => setRecurrence((prev) => (prev === "none" ? "daily" : "none"))}
+                onClick={() => {
+                  if (recurrence === "none") {
+                    setRecurrence("daily");
+                  } else {
+                    setRecurrence("none");
+                    setRecurrenceAnchored(false);
+                    setShowRotationNames(false);
+                  }
+                }}
                 aria-label="Toggle recurrence"
                 title="Toggle recurrence"
               >
@@ -2578,7 +2665,10 @@ export default function TodoeyPage() {
                 <div style={styles.recurrenceRow}>
                   <button
                     style={recurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                    onClick={() => setRecurrence("daily")}
+                    onClick={() => {
+                      setRecurrence("daily");
+                      setRecurrenceAnchored(false);
+                    }}
                   >
                     Daily
                   </button>
@@ -2590,7 +2680,10 @@ export default function TodoeyPage() {
                   </button>
                   <button
                     style={recurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                    onClick={() => setRecurrence("monthly")}
+                    onClick={() => {
+                      setRecurrence("monthly");
+                      setRecurrenceAnchored(false);
+                    }}
                   >
                     Monthly
                   </button>
@@ -2604,14 +2697,18 @@ export default function TodoeyPage() {
                   >
                     Fibonacci
                   </button>
-                  {recurrence !== "fibonacci" ? (
-                    <button
-                      style={recurrenceAnchored ? styles.recurrenceChipActive : styles.recurrenceChip}
-                      onClick={() => setRecurrenceAnchored((prev) => !prev)}
-                    >
-                      Date anchor
-                    </button>
-                  ) : null}
+                  <button
+                    style={
+                      showRotationNames || rotationText
+                        ? styles.recurrenceChipActive
+                        : styles.recurrenceChip
+                    }
+                    onClick={() => setShowRotationNames((prev) => !prev)}
+                    aria-label="Toggle rotating task names"
+                    title="Rotating task names"
+                  >
+                    🔀
+                  </button>
                   {recurrence !== "fibonacci" ? (
                     <div style={styles.intervalControl}>
                       Every
@@ -2637,8 +2734,33 @@ export default function TodoeyPage() {
                       {fibonacciDays(recurrenceInterval) === 1 ? "day" : "days"}
                     </div>
                   )}
+                  {recurrence === "weekly" ? (
+                    <div style={styles.weekdayPicker}>
+                      {WEEKDAY_LABELS.map((label, index) => {
+                        const isSelected =
+                          recurrenceAnchored && weekdayFromDateInput(dueDate) === index;
+
+                        return (
+                          <button
+                            key={`${label}-${index}`}
+                            style={
+                              isSelected
+                                ? styles.weekdayButtonActive
+                                : styles.weekdayButton
+                            }
+                            onClick={() => toggleWeeklyAnchor(index)}
+                            aria-label={WEEKDAY_NAMES[index]}
+                            title={WEEKDAY_NAMES[index]}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
 
+                {showRotationNames ? (
                 <div style={styles.fieldGroup}>
                   <label style={styles.fieldLabel}>Rotating task names</label>
                   <textarea
@@ -2648,6 +2770,7 @@ export default function TodoeyPage() {
                     placeholder={"Clean bathroom\nClean kitchen"}
                   />
                 </div>
+                ) : null}
               </>
             ) : null}
 
@@ -2872,12 +2995,7 @@ export default function TodoeyPage() {
                   style={styles.input}
                   type="date"
                   value={editDueDate}
-                  onChange={(e) => {
-                    setEditDueDate(e.target.value);
-                    if (editRecurrence !== "none" && editRecurrence !== "fibonacci") {
-                      setEditRecurrenceAnchored(true);
-                    }
-                  }}
+                  onChange={(e) => setEditDueDate(e.target.value)}
                 />
                 <button
                   style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
@@ -2889,7 +3007,15 @@ export default function TodoeyPage() {
                 </button>
                 <button
                   style={editRecurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
-                  onClick={() => setEditRecurrence((prev) => (prev === "none" ? "daily" : "none"))}
+                  onClick={() => {
+                    if (editRecurrence === "none") {
+                      setEditRecurrence("daily");
+                    } else {
+                      setEditRecurrence("none");
+                      setEditRecurrenceAnchored(false);
+                      setShowEditRotationNames(false);
+                    }
+                  }}
                   aria-label="Toggle recurrence"
                   title="Toggle recurrence"
                 >
@@ -2903,7 +3029,10 @@ export default function TodoeyPage() {
                 <div style={styles.recurrenceRow}>
                   <button
                     style={editRecurrence === "daily" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                    onClick={() => setEditRecurrence("daily")}
+                    onClick={() => {
+                      setEditRecurrence("daily");
+                      setEditRecurrenceAnchored(false);
+                    }}
                   >
                     Daily
                   </button>
@@ -2915,7 +3044,10 @@ export default function TodoeyPage() {
                   </button>
                   <button
                     style={editRecurrence === "monthly" ? styles.recurrenceChipActive : styles.recurrenceChip}
-                    onClick={() => setEditRecurrence("monthly")}
+                    onClick={() => {
+                      setEditRecurrence("monthly");
+                      setEditRecurrenceAnchored(false);
+                    }}
                   >
                     Monthly
                   </button>
@@ -2929,14 +3061,18 @@ export default function TodoeyPage() {
                   >
                     Fibonacci
                   </button>
-                  {editRecurrence !== "fibonacci" ? (
-                    <button
-                      style={editRecurrenceAnchored ? styles.recurrenceChipActive : styles.recurrenceChip}
-                      onClick={() => setEditRecurrenceAnchored((prev) => !prev)}
-                    >
-                      Date anchor
-                    </button>
-                  ) : null}
+                  <button
+                    style={
+                      showEditRotationNames || editRotationText
+                        ? styles.recurrenceChipActive
+                        : styles.recurrenceChip
+                    }
+                    onClick={() => setShowEditRotationNames((prev) => !prev)}
+                    aria-label="Toggle rotating task names"
+                    title="Rotating task names"
+                  >
+                    🔀
+                  </button>
                   {editRecurrence !== "fibonacci" ? (
                     <div style={styles.intervalControl}>
                       Every
@@ -2962,8 +3098,34 @@ export default function TodoeyPage() {
                       {fibonacciDays(editRecurrenceInterval) === 1 ? "day" : "days"}
                     </div>
                   )}
+                  {editRecurrence === "weekly" ? (
+                    <div style={styles.weekdayPicker}>
+                      {WEEKDAY_LABELS.map((label, index) => {
+                        const isSelected =
+                          editRecurrenceAnchored &&
+                          weekdayFromDateInput(editDueDate) === index;
+
+                        return (
+                          <button
+                            key={`${label}-${index}`}
+                            style={
+                              isSelected
+                                ? styles.weekdayButtonActive
+                                : styles.weekdayButton
+                            }
+                            onClick={() => toggleEditWeeklyAnchor(index)}
+                            aria-label={WEEKDAY_NAMES[index]}
+                            title={WEEKDAY_NAMES[index]}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
 
+                {showEditRotationNames ? (
                 <div style={styles.fieldGroup}>
                   <label style={styles.fieldLabel}>Rotating task names</label>
                   <textarea
@@ -2973,6 +3135,7 @@ export default function TodoeyPage() {
                     placeholder={"Clean bathroom\nClean kitchen"}
                   />
                 </div>
+                ) : null}
               </>
             ) : null}
 
