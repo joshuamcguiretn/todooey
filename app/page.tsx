@@ -48,6 +48,7 @@ const SYNC_BASE_KEY = "todoey-sync-base-v1";
 const TASK_LISTS_KEY = "todoey-task-lists-v1";
 const ACTIVE_LIST_KEY = "todoey-active-list-v1";
 const DEFAULT_LIST_ID = "home";
+const LIST_LONG_PRESS_MS = 520;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -1350,6 +1351,8 @@ export default function TodoeyPage() {
   const [taskConflicts, setTaskConflicts] = useState<TaskConflict[]>([]);
   const [syncRetryNonce, setSyncRetryNonce] = useState(0);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
+  const listLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listLongPressTriggeredRef = useRef(false);
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2150,6 +2153,55 @@ export default function TodoeyPage() {
     window.setTimeout(() => {
       taskInputRef.current?.focus();
     }, 0);
+  }
+
+  function openListSwitcher() {
+    setNewListName("");
+    setListSwitcherOpen(true);
+  }
+
+  function cycleTaskList() {
+    const lists = taskLists.length > 0 ? taskLists : DEFAULT_TASK_LISTS;
+    const currentIndex = lists.findIndex((list) => list.id === activeTaskList.id);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % lists.length : 0;
+    const nextList = lists[nextIndex];
+
+    if (nextList) {
+      selectTaskList(nextList.id);
+    }
+  }
+
+  function clearListLongPressTimer() {
+    if (listLongPressTimerRef.current) {
+      clearTimeout(listLongPressTimerRef.current);
+      listLongPressTimerRef.current = null;
+    }
+  }
+
+  function startListLongPress() {
+    clearListLongPressTimer();
+    listLongPressTriggeredRef.current = false;
+
+    listLongPressTimerRef.current = setTimeout(() => {
+      listLongPressTriggeredRef.current = true;
+      listLongPressTimerRef.current = null;
+      openListSwitcher();
+    }, LIST_LONG_PRESS_MS);
+  }
+
+  function finishListPress() {
+    const wasLongPress = listLongPressTriggeredRef.current;
+    clearListLongPressTimer();
+    listLongPressTriggeredRef.current = false;
+
+    if (!wasLongPress) {
+      cycleTaskList();
+    }
+  }
+
+  function cancelListPress() {
+    clearListLongPressTimer();
+    listLongPressTriggeredRef.current = false;
   }
 
   function addTaskList() {
@@ -3020,9 +3072,19 @@ export default function TodoeyPage() {
           <div style={styles.header}>
             <button
               style={styles.headerButton}
-              onClick={() => setListSwitcherOpen(true)}
-              aria-label="Switch task list"
-              title="Switch task list"
+              onPointerDown={startListLongPress}
+              onPointerUp={finishListPress}
+              onPointerLeave={cancelListPress}
+              onPointerCancel={cancelListPress}
+              onContextMenu={(event) => event.preventDefault()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  cycleTaskList();
+                }
+              }}
+              aria-label="Cycle task list. Long press for all lists."
+              title="Tap to switch list. Long press for all lists."
             >
               <span style={styles.headerWord}>ToDooey</span>
               <span style={styles.listSplash}>{activeTaskList.name}</span>
