@@ -19,6 +19,7 @@ const WEEKDAY_NAMES = [
 
 type Task = {
   id: string;
+  listId: string;
   title: string;
   dueDate: string;
   priority: Priority;
@@ -33,14 +34,28 @@ type Task = {
   createdAt: string;
 };
 
+type TaskList = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
 const STORAGE_KEY = "todoey-v1";
 const DAILY_PROGRESS_KEY = "todoey-daily-progress";
 const CLOUD_MIGRATION_KEY = "todoey-cloud-migrated";
 const PENDING_SYNC_KEY = "todoey-pending-sync-v1";
 const SYNC_BASE_KEY = "todoey-sync-base-v1";
+const TASK_LISTS_KEY = "todoey-task-lists-v1";
+const ACTIVE_LIST_KEY = "todoey-active-list-v1";
+const DEFAULT_LIST_ID = "home";
+const DEFAULT_TASK_LISTS: TaskList[] = [
+  { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
+  { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
+];
 
 type DailyProgress = {
   date: string;
+  listId: string;
   completedTodayCount: number;
 };
 
@@ -72,6 +87,7 @@ type TaskSyncResult = {
 
 type DbTask = {
   id: string;
+  list_id: string | null;
   title: string;
   due_date: string;
   priority: Priority;
@@ -86,6 +102,12 @@ type DbTask = {
   created_at: string;
 };
 
+type DbTaskList = {
+  id: string;
+  name: string | null;
+  created_at: string | null;
+};
+
 function formatDateInput(date = new Date()) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -95,6 +117,81 @@ function formatDateInput(date = new Date()) {
 
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeListId(value: unknown) {
+  const listId = String(value ?? "").trim();
+  return listId || DEFAULT_LIST_ID;
+}
+
+function normalizeTaskList(list: Partial<TaskList>): TaskList {
+  const name = String(list.name ?? "").trim();
+
+  return {
+    id: normalizeListId(list.id),
+    name: name || "Untitled",
+    createdAt: list.createdAt ?? new Date().toISOString(),
+  };
+}
+
+function mergeTaskLists(...listGroups: TaskList[][]) {
+  const merged = new Map<string, TaskList>();
+
+  DEFAULT_TASK_LISTS.forEach((list) => merged.set(list.id, list));
+
+  listGroups.flat().forEach((list) => {
+    const normalized = normalizeTaskList(list);
+    const existing = merged.get(normalized.id);
+
+    merged.set(normalized.id, {
+      ...normalized,
+      createdAt: existing?.createdAt ?? normalized.createdAt,
+    });
+  });
+
+  return Array.from(merged.values()).sort((a, b) => {
+    const defaultA = DEFAULT_TASK_LISTS.findIndex((list) => list.id === a.id);
+    const defaultB = DEFAULT_TASK_LISTS.findIndex((list) => list.id === b.id);
+
+    if (defaultA !== -1 || defaultB !== -1) {
+      if (defaultA === -1) return 1;
+      if (defaultB === -1) return -1;
+      return defaultA - defaultB;
+    }
+
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+}
+
+function loadLocalTaskLists() {
+  if (typeof window === "undefined") return DEFAULT_TASK_LISTS;
+
+  const saved = window.localStorage.getItem(TASK_LISTS_KEY);
+  if (!saved) return DEFAULT_TASK_LISTS;
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<TaskList>[];
+    return mergeTaskLists(parsed.map(normalizeTaskList));
+  } catch {
+    return DEFAULT_TASK_LISTS;
+  }
+}
+
+function saveLocalTaskLists(lists: TaskList[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TASK_LISTS_KEY, JSON.stringify(mergeTaskLists(lists)));
+}
+
+function loadActiveListId(lists: TaskList[]) {
+  if (typeof window === "undefined") return DEFAULT_LIST_ID;
+
+  const saved = normalizeListId(window.localStorage.getItem(ACTIVE_LIST_KEY));
+  return lists.some((list) => list.id === saved) ? saved : DEFAULT_LIST_ID;
+}
+
+function saveActiveListId(listId: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(ACTIVE_LIST_KEY, normalizeListId(listId));
 }
 
 function isDueTodayOrOlder(dueDate: string) {
@@ -208,6 +305,7 @@ function normalizeTask(task: Partial<Task>): Task {
 
   return {
     id: task.id ?? generateId(),
+    listId: normalizeListId(task.listId),
     title,
     dueDate: task.dueDate ?? formatDateInput(),
     priority: task.priority === 1 ? 1 : 2,
@@ -276,26 +374,104 @@ function saveSyncBaseTask(userId: string, taskId: string, task: Task | null) {
   saveSyncBaseTasks(userId, nextTasks);
 }
 
+function progressSyncKey(date: string, listId: string) {
+  return `${normalizeListId(listId)}::${date}`;
+}
+
+function parseProgressSyncKey(key: string) {
+  const [listId, date] = key.includes("::")
+    ? key.split("::")
+    : [DEFAULT_LIST_ID, key];
+
+  return {
+    listId: normalizeListId(listId),
+    date: date || formatDateInput(),
+  };
+}
+
 function normalizeDailyProgress(progress: Partial<DailyProgress> | null): DailyProgress | null {
   if (!progress?.date) return null;
 
   return {
     date: String(progress.date),
+    listId: normalizeListId(progress.listId),
     completedTodayCount: Math.max(0, Number(progress.completedTodayCount ?? 0)),
   };
 }
 
 function loadLocalDailyProgress() {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined") return [] as DailyProgress[];
 
   const saved = window.localStorage.getItem(DAILY_PROGRESS_KEY);
-  if (!saved) return null;
+  if (!saved) return [];
 
   try {
-    return normalizeDailyProgress(JSON.parse(saved) as Partial<DailyProgress>);
+    const parsed = JSON.parse(saved) as Partial<DailyProgress>[] | Partial<DailyProgress>;
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+
+    return items
+      .map((item) => normalizeDailyProgress(item))
+      .filter((item): item is DailyProgress => Boolean(item));
   } catch {
-    return null;
+    return [];
   }
+}
+
+function mergeDailyProgressItems(
+  cloudItems: DailyProgress[],
+  localItems: DailyProgress[],
+  pending: PendingSync
+) {
+  const merged = new Map(
+    cloudItems.map((item) => [progressSyncKey(item.date, item.listId), item])
+  );
+  const localByKey = new Map(
+    localItems.map((item) => [progressSyncKey(item.date, item.listId), item])
+  );
+
+  pending.progressDates.forEach((key) => {
+    const { date, listId } = parseProgressSyncKey(key);
+    const localItem = localByKey.get(progressSyncKey(date, listId));
+    if (localItem) {
+      merged.set(progressSyncKey(date, listId), localItem);
+    }
+  });
+
+  return Array.from(merged.values());
+}
+
+function progressForList(progressItems: DailyProgress[], listId: string) {
+  const today = formatDateInput();
+  return (
+    progressItems.find(
+      (item) => item.date === today && normalizeListId(item.listId) === normalizeListId(listId)
+    ) ?? {
+      date: today,
+      listId: normalizeListId(listId),
+      completedTodayCount: 0,
+    }
+  );
+}
+
+function updateProgressCount(
+  progressItems: DailyProgress[],
+  listId: string,
+  updater: (count: number) => number
+) {
+  const today = formatDateInput();
+  const normalizedListId = normalizeListId(listId);
+  const existing = progressForList(progressItems, normalizedListId);
+  const nextProgress = {
+    date: today,
+    listId: normalizedListId,
+    completedTodayCount: Math.max(0, updater(existing.completedTodayCount)),
+  };
+  const withoutExisting = progressItems.filter(
+    (item) =>
+      item.date !== today || normalizeListId(item.listId) !== normalizedListId
+  );
+
+  return [...withoutExisting, nextProgress];
 }
 
 function pendingSyncKey(userId: string) {
@@ -378,13 +554,14 @@ function markPendingTaskDelete(userId: string, taskId: string) {
   });
 }
 
-function markPendingProgressChange(userId: string, date: string) {
+function markPendingProgressChange(userId: string, date: string, listId: string) {
   const pending = loadPendingSync(userId);
   const now = new Date().toISOString();
+  const key = progressSyncKey(date, listId);
 
   savePendingSync(userId, {
     ...pending,
-    progressDates: Array.from(new Set([...pending.progressDates, date])),
+    progressDates: Array.from(new Set([...pending.progressDates, key])),
     progressUpdatedAt: now,
   });
 }
@@ -454,8 +631,8 @@ function hasPendingTasks(pending: PendingSync) {
   return pending.taskIds.length > 0 || pending.deletedTaskIds.length > 0;
 }
 
-function hasPendingProgress(pending: PendingSync, progress: DailyProgress | null) {
-  return Boolean(progress && pending.progressDates.includes(progress.date));
+function hasPendingProgress(pending: PendingSync) {
+  return pending.progressDates.length > 0;
 }
 
 function sortTasksByDate(tasks: Task[]) {
@@ -470,6 +647,7 @@ function taskSignature(task: Task | null) {
   if (!task) return "__missing__";
 
   return JSON.stringify({
+    listId: normalizeListId(task.listId),
     title: task.title,
     dueDate: task.dueDate,
     priority: task.priority,
@@ -554,9 +732,23 @@ function mergePendingTasks(
   };
 }
 
+function preserveLocalTaskListIds(cloudTasks: Task[], localTasks: Task[]) {
+  const localById = new Map(localTasks.map((task) => [task.id, task]));
+
+  return cloudTasks.map((task) => {
+    const localTask = localById.get(task.id);
+    if (!localTask || task.listId !== DEFAULT_LIST_ID || localTask.listId === DEFAULT_LIST_ID) {
+      return task;
+    }
+
+    return { ...task, listId: localTask.listId };
+  });
+}
+
 function dbTaskToTask(task: DbTask): Task {
   return normalizeTask({
     id: task.id,
+    listId: task.list_id ?? DEFAULT_LIST_ID,
     title: task.title,
     dueDate: task.due_date,
     priority: task.priority === 1 ? 1 : 2,
@@ -572,7 +764,11 @@ function dbTaskToTask(task: DbTask): Task {
   });
 }
 
-function taskToDbTask(task: Task, userId: string, includeRecurrenceAnchor = true) {
+function taskToDbTask(
+  task: Task,
+  userId: string,
+  options = { includeRecurrenceAnchor: true, includeListId: true }
+) {
   const record = {
     id: task.id,
     user_id: userId,
@@ -589,27 +785,51 @@ function taskToDbTask(task: Task, userId: string, includeRecurrenceAnchor = true
     created_at: task.createdAt,
   };
 
-  return includeRecurrenceAnchor
-    ? { ...record, recurrence_anchored: task.recurrenceAnchored }
-    : record;
+  return {
+    ...record,
+    ...(options.includeListId ? { list_id: normalizeListId(task.listId) } : {}),
+    ...(options.includeRecurrenceAnchor
+      ? { recurrence_anchored: task.recurrenceAnchored }
+      : {}),
+  };
 }
 
 function isMissingRecurrenceAnchorError(message: string) {
   return message.includes("recurrence_anchored");
 }
 
+function isMissingListColumnError(message: string) {
+  return message.includes("list_id") || message.includes("task_lists");
+}
+
 async function upsertTaskRecords(userId: string, tasks: Task[]) {
   if (!supabase || tasks.length === 0) return "";
 
-  const records = tasks.map((task) => taskToDbTask(task, userId));
-  const { error } = await supabase.from("tasks").upsert(records);
+  let includeRecurrenceAnchor = true;
+  let includeListId = true;
 
-  if (!error) return "";
-  if (!isMissingRecurrenceAnchorError(error.message)) return error.message;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const records = tasks.map((task) =>
+      taskToDbTask(task, userId, { includeRecurrenceAnchor, includeListId })
+    );
+    const { error } = await supabase.from("tasks").upsert(records);
 
-  const fallbackRecords = tasks.map((task) => taskToDbTask(task, userId, false));
-  const fallbackResult = await supabase.from("tasks").upsert(fallbackRecords);
-  return fallbackResult.error?.message ?? "";
+    if (!error) return "";
+
+    if (includeRecurrenceAnchor && isMissingRecurrenceAnchorError(error.message)) {
+      includeRecurrenceAnchor = false;
+      continue;
+    }
+
+    if (includeListId && isMissingListColumnError(error.message)) {
+      includeListId = false;
+      continue;
+    }
+
+    return error.message;
+  }
+
+  return "";
 }
 
 function dateFromInput(dateInput: string) {
@@ -766,8 +986,86 @@ function useIsDesktop() {
   return isDesktop;
 }
 
+function dbTaskListToTaskList(list: DbTaskList): TaskList {
+  return normalizeTaskList({
+    id: list.id,
+    name: list.name ?? "",
+    createdAt: list.created_at ?? undefined,
+  });
+}
+
+function isMissingTaskListsTableError(message: string) {
+  return message.includes("task_lists") || message.includes("schema cache");
+}
+
+async function fetchCloudTaskLists(userId: string) {
+  if (!supabase) {
+    return {
+      lists: DEFAULT_TASK_LISTS,
+      error: "Supabase is not configured.",
+      isMissingTable: false,
+    };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("task_lists")
+      .select("id, name, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      if (isMissingTaskListsTableError(error.message)) {
+        return { lists: DEFAULT_TASK_LISTS, error: "", isMissingTable: true };
+      }
+
+      return { lists: DEFAULT_TASK_LISTS, error: error.message, isMissingTable: false };
+    }
+
+    return {
+      lists: mergeTaskLists(((data ?? []) as DbTaskList[]).map(dbTaskListToTaskList)),
+      error: "",
+      isMissingTable: false,
+    };
+  } catch (error) {
+    return {
+      lists: DEFAULT_TASK_LISTS,
+      error: error instanceof Error ? error.message : "Could not load task lists.",
+      isMissingTable: false,
+    };
+  }
+}
+
+async function saveCloudTaskLists(userId: string, lists: TaskList[]) {
+  if (!supabase) return "Supabase is not configured.";
+
+  try {
+    const records = mergeTaskLists(lists).map((list) => ({
+      id: list.id,
+      user_id: userId,
+      name: list.name,
+      created_at: list.createdAt,
+    }));
+
+    const { error } = await supabase
+      .from("task_lists")
+      .upsert(records, { onConflict: "user_id,id" });
+
+    if (error && isMissingTaskListsTableError(error.message)) return "";
+    return error?.message ?? "";
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not sync task lists.";
+  }
+}
+
 async function fetchCloudTasks(userId: string) {
-  if (!supabase) return { tasks: [] as Task[], error: "Supabase is not configured." };
+  if (!supabase) {
+    return {
+      tasks: [] as Task[],
+      error: "Supabase is not configured.",
+      isMissingListColumn: false,
+    };
+  }
 
   try {
     const { data, error } = await supabase
@@ -777,16 +1075,22 @@ async function fetchCloudTasks(userId: string) {
       .order("due_date", { ascending: true })
       .order("created_at", { ascending: true });
 
-    if (error) return { tasks: [] as Task[], error: error.message };
+    if (error) {
+      return { tasks: [] as Task[], error: error.message, isMissingListColumn: false };
+    }
+
+    const rows = (data ?? []) as Record<string, unknown>[];
 
     return {
-      tasks: ((data ?? []) as DbTask[]).map(dbTaskToTask),
+      tasks: (rows as DbTask[]).map(dbTaskToTask),
       error: "",
+      isMissingListColumn: rows.length > 0 && !("list_id" in rows[0]),
     };
   } catch (error) {
     return {
       tasks: [] as Task[],
       error: error instanceof Error ? error.message : "Could not load tasks.",
+      isMissingListColumn: false,
     };
   }
 }
@@ -892,46 +1196,106 @@ async function saveCloudTaskChanges(
 
 async function fetchCloudDailyProgress(userId: string) {
   if (!supabase) {
-    return { progress: null as DailyProgress | null, error: "Supabase is not configured." };
+    return { progress: [] as DailyProgress[], error: "Supabase is not configured." };
   }
 
   try {
     const today = formatDateInput();
     const { data, error } = await supabase
       .from("daily_progress")
-      .select("date, completed_today_count")
+      .select("date, list_id, completed_today_count")
       .eq("user_id", userId)
-      .eq("date", today)
-      .maybeSingle();
+      .eq("date", today);
 
-    if (error) return { progress: null, error: error.message };
+    if (error) {
+      if (!isMissingListColumnError(error.message)) {
+        return { progress: [] as DailyProgress[], error: error.message };
+      }
+
+      const fallbackResult = await supabase
+        .from("daily_progress")
+        .select("date, completed_today_count")
+        .eq("user_id", userId)
+        .eq("date", today)
+        .maybeSingle();
+
+      if (fallbackResult.error) {
+        return { progress: [] as DailyProgress[], error: fallbackResult.error.message };
+      }
+
+      return {
+        progress: fallbackResult.data
+          ? [
+              {
+                date: String(fallbackResult.data.date),
+                listId: DEFAULT_LIST_ID,
+                completedTodayCount: Math.max(
+                  0,
+                  Number(fallbackResult.data.completed_today_count ?? 0)
+                ),
+              },
+            ]
+          : [],
+        error: "",
+      };
+    }
 
     return {
-      progress: data
-        ? {
-            date: String(data.date),
-            completedTodayCount: Math.max(0, Number(data.completed_today_count ?? 0)),
-          }
-        : null,
+      progress: ((data ?? []) as (Partial<DailyProgress> & {
+        list_id?: string | null;
+        completed_today_count?: number | null;
+      })[])
+        .map((item) =>
+          normalizeDailyProgress({
+            date: item.date,
+            listId: item.list_id ?? DEFAULT_LIST_ID,
+            completedTodayCount: item.completed_today_count ?? 0,
+          })
+        )
+        .filter((item): item is DailyProgress => Boolean(item)),
       error: "",
     };
   } catch (error) {
     return {
-      progress: null,
+      progress: [] as DailyProgress[],
       error: error instanceof Error ? error.message : "Could not load progress.",
     };
   }
 }
 
-async function saveCloudDailyProgress(userId: string, progress: DailyProgress) {
+async function saveCloudDailyProgress(userId: string, progressItems: DailyProgress[]) {
   if (!supabase) return "Supabase is not configured.";
 
   try {
-    const { error } = await supabase.from("daily_progress").upsert({
+    const today = formatDateInput();
+    const todaysProgress = progressItems.filter((item) => item.date === today);
+
+    if (todaysProgress.length === 0) return "";
+
+    const records = todaysProgress.map((progress) => ({
       user_id: userId,
       date: progress.date,
+      list_id: normalizeListId(progress.listId),
       completed_today_count: Math.max(0, progress.completedTodayCount),
-    });
+    }));
+
+    const { error } = await supabase
+      .from("daily_progress")
+      .upsert(records, { onConflict: "user_id,list_id,date" });
+
+    if (error && isMissingListColumnError(error.message)) {
+      const fallbackCount = todaysProgress.reduce(
+        (sum, progress) => sum + Math.max(0, progress.completedTodayCount),
+        0
+      );
+      const fallbackResult = await supabase.from("daily_progress").upsert({
+        user_id: userId,
+        date: today,
+        completed_today_count: fallbackCount,
+      });
+
+      return fallbackResult.error?.message ?? "";
+    }
 
     return error?.message ?? "";
   } catch (error) {
@@ -942,6 +1306,10 @@ async function saveCloudDailyProgress(userId: string, progress: DailyProgress) {
 export default function TodoeyPage() {
   const isDesktop = useIsDesktop();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskLists, setTaskLists] = useState<TaskList[]>(DEFAULT_TASK_LISTS);
+  const [activeListId, setActiveListId] = useState(DEFAULT_LIST_ID);
+  const [listSwitcherOpen, setListSwitcherOpen] = useState(false);
+  const [newListName, setNewListName] = useState("");
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [authLoaded, setAuthLoaded] = useState(!isSupabaseConfigured);
@@ -963,10 +1331,7 @@ export default function TodoeyPage() {
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [viewMode, setViewMode] = useState<"current" | "future" | "recurring">("current");
-  const [dailyProgress, setDailyProgress] = useState<DailyProgress>({
-    date: formatDateInput(),
-    completedTodayCount: 0,
-  });
+  const [dailyProgress, setDailyProgress] = useState<DailyProgress[]>([]);
   const [dailyProgressLoaded, setDailyProgressLoaded] = useState(false);
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<string[]>([]);
@@ -998,9 +1363,9 @@ export default function TodoeyPage() {
     markPendingTaskDelete(user.id, taskId);
   }
 
-  function rememberProgressChange(date = formatDateInput()) {
+  function rememberProgressChange(date = formatDateInput(), listId = activeListId) {
     if (!user) return;
-    markPendingProgressChange(user.id, date);
+    markPendingProgressChange(user.id, date, listId);
   }
 
   const clearEditState = React.useCallback(() => {
@@ -1019,8 +1384,11 @@ export default function TodoeyPage() {
 
   useEffect(() => {
     const localTasks = loadLocalTasks();
+    const localTaskLists = loadLocalTaskLists();
 
     window.setTimeout(() => {
+      setTaskLists(localTaskLists);
+      setActiveListId(loadActiveListId(localTaskLists));
       setTasks(localTasks);
       setTasksLoaded(true);
     }, 0);
@@ -1035,6 +1403,16 @@ export default function TodoeyPage() {
   }, [tasks, tasksLoaded]);
 
   useEffect(() => {
+    if (!tasksLoaded) return;
+    saveLocalTaskLists(taskLists);
+  }, [taskLists, tasksLoaded]);
+
+  useEffect(() => {
+    if (!tasksLoaded) return;
+    saveActiveListId(activeListId);
+  }, [activeListId, tasksLoaded]);
+
+  useEffect(() => {
     if (!dailyProgressLoaded) return;
 
     if (typeof window !== "undefined") {
@@ -1045,23 +1423,10 @@ export default function TodoeyPage() {
   useEffect(() => {
     const savedProgress = loadLocalDailyProgress();
 
-    if (savedProgress) {
-      const today = formatDateInput();
-
-      if (savedProgress.date === today) {
-        window.setTimeout(() => {
-          setDailyProgress(savedProgress);
-          setDailyProgressLoaded(true);
-        }, 0);
-      } else {
-        window.setTimeout(() => {
-          setDailyProgress({ date: today, completedTodayCount: 0 });
-          setDailyProgressLoaded(true);
-        }, 0);
-      }
-    } else {
-      window.setTimeout(() => setDailyProgressLoaded(true), 0);
-    }
+    window.setTimeout(() => {
+      setDailyProgress(savedProgress.filter((progress) => progress.date === formatDateInput()));
+      setDailyProgressLoaded(true);
+    }, 0);
   }, []);
 
   useEffect(() => {
@@ -1104,16 +1469,17 @@ export default function TodoeyPage() {
     async function loadCloudData() {
       setCloudLoaded(false);
 
-      const [{ tasks: cloudTasks, error: taskError }, progressResult] =
+      const [taskResult, progressResult, listResult] =
         await Promise.all([
           fetchCloudTasks(user!.id),
           fetchCloudDailyProgress(user!.id),
+          fetchCloudTaskLists(user!.id),
         ]);
 
       if (isCancelled) return;
 
-      if (taskError) {
-        setAuthMessage(taskError);
+      if (taskResult.error) {
+        setAuthMessage(taskResult.error);
         setCloudLoaded(true);
         return;
       }
@@ -1121,7 +1487,13 @@ export default function TodoeyPage() {
       const pendingSync = loadPendingSync(user!.id);
       const localTasks = loadLocalTasks();
       const localProgress = loadLocalDailyProgress();
+      const localTaskLists = loadLocalTaskLists();
       const baseTasks = loadSyncBaseTasks(user!.id);
+      const cloudTaskLists = listResult.lists;
+      const nextTaskLists = mergeTaskLists(localTaskLists, cloudTaskLists);
+      const cloudTasks = taskResult.isMissingListColumn
+        ? preserveLocalTaskListIds(taskResult.tasks, localTasks)
+        : taskResult.tasks;
       const hasPendingTaskChanges = hasPendingTasks(pendingSync);
       const mergeResult = hasPendingTaskChanges
         ? mergePendingTasks(cloudTasks, localTasks, baseTasks, pendingSync)
@@ -1152,8 +1524,13 @@ export default function TodoeyPage() {
         saveSyncBaseTasks(user!.id, cloudTasks);
       }
 
+      setTaskLists(nextTaskLists);
       setTasks(nextTasks);
       setTaskConflicts(mergeResult.conflicts);
+
+      setActiveListId((current) =>
+        nextTaskLists.some((list) => list.id === current) ? current : DEFAULT_LIST_ID
+      );
 
       if (mergeResult.conflicts.length > 0) {
         setAuthMessage(
@@ -1163,12 +1540,23 @@ export default function TodoeyPage() {
         );
       }
 
+      if (listResult.error) {
+        setAuthMessage(listResult.error);
+      } else if (!listResult.isMissingTable) {
+        const listSyncError = await saveCloudTaskLists(user!.id, nextTaskLists);
+        if (!isCancelled && listSyncError) {
+          setAuthMessage(listSyncError);
+        }
+      }
+
       if (progressResult.error) {
         setAuthMessage(progressResult.error);
-      } else if (hasPendingProgress(pendingSync, localProgress)) {
-        setDailyProgress(localProgress!);
-      } else if (progressResult.progress) {
-        setDailyProgress(progressResult.progress);
+      } else {
+        setDailyProgress(
+          hasPendingProgress(pendingSync)
+            ? mergeDailyProgressItems(progressResult.progress, localProgress, pendingSync)
+            : progressResult.progress
+        );
       }
 
       setCloudLoaded(true);
@@ -1202,6 +1590,16 @@ export default function TodoeyPage() {
       document.removeEventListener("visibilitychange", requestVisibleRetry);
     };
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
+
+    saveCloudTaskLists(user.id, taskLists).then((error) => {
+      if (error) {
+        setAuthMessage(error);
+      }
+    });
+  }, [cloudLoaded, taskLists, tasksLoaded, user]);
 
   useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
@@ -1307,8 +1705,16 @@ export default function TodoeyPage() {
     };
   }, [clearEditState, editingTaskId, fullScreenImage]);
 
+  const activeTaskList = useMemo(() => {
+    return taskLists.find((list) => list.id === activeListId) ?? DEFAULT_TASK_LISTS[0];
+  }, [activeListId, taskLists]);
+
+  const activeListTasks = useMemo(() => {
+    return tasks.filter((task) => normalizeListId(task.listId) === activeTaskList.id);
+  }, [activeTaskList.id, tasks]);
+
   const visibleTasks = useMemo(() => {
-    const sorted = [...tasks].sort((a, b) => {
+    const sorted = [...activeListTasks].sort((a, b) => {
       if (a.priority !== b.priority) {
         return a.priority - b.priority;
       }
@@ -1335,15 +1741,17 @@ export default function TodoeyPage() {
     return sorted.filter(
       (task) => !task.done && isDueTodayOrOlder(task.dueDate)
     );
-  }, [tasks, showCompleted, viewMode]);
+  }, [activeListTasks, showCompleted, viewMode]);
 
   const activeDueCount = useMemo(() => {
-    return tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
-  }, [tasks]);
+    return activeListTasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
+  }, [activeListTasks]);
 
   const progressStats = useMemo(() => {
-    const today = formatDateInput();
-    const completedTodayCount = dailyProgress.date === today ? dailyProgress.completedTodayCount : 0;
+    const completedTodayCount = progressForList(
+      dailyProgress,
+      activeTaskList.id
+    ).completedTodayCount;
     const totalTodayCount = activeDueCount + completedTodayCount;
     const percent =
       totalTodayCount === 0
@@ -1355,11 +1763,11 @@ export default function TodoeyPage() {
       totalTodayCount,
       percent,
     };
-  }, [activeDueCount, dailyProgress]);
+  }, [activeDueCount, activeTaskList.id, dailyProgress]);
 
   const workloadForecast = useMemo(() => {
-    return upcomingWorkload(tasks);
-  }, [tasks]);
+    return upcomingWorkload(activeListTasks);
+  }, [activeListTasks]);
 
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
@@ -1514,6 +1922,7 @@ export default function TodoeyPage() {
 
     const newTask: Task = {
       id: generateId(),
+      listId: activeTaskList.id,
       title: cleaned,
       dueDate,
       priority,
@@ -1650,7 +2059,7 @@ export default function TodoeyPage() {
 
       window.setTimeout(() => {
         rememberTaskChange(id);
-        rememberProgressChange();
+        rememberProgressChange(formatDateInput(), taskToComplete.listId);
 
         setTasks((prev) =>
           prev.map((task) => {
@@ -1694,14 +2103,9 @@ export default function TodoeyPage() {
 
         setCompletingTaskIds((prev) => prev.filter((taskId) => taskId !== id));
 
-        setDailyProgress((prev) => {
-          const today = formatDateInput();
-          const currentCount = prev.date === today ? prev.completedTodayCount : 0;
-          return {
-            date: today,
-            completedTodayCount: currentCount + 1,
-          };
-        });
+        setDailyProgress((prev) =>
+          updateProgressCount(prev, taskToComplete.listId, (count) => count + 1)
+        );
 
         if (!isRecurring) {
           setLastCompletedTaskId(id);
@@ -1737,20 +2141,56 @@ export default function TodoeyPage() {
     setTasks((prev) => prev.filter((item) => item.id !== task.id));
   }
 
+  function selectTaskList(listId: string) {
+    setActiveListId(normalizeListId(listId));
+    setListSwitcherOpen(false);
+    setShowCompleted(false);
+    setNewListName("");
+
+    window.setTimeout(() => {
+      taskInputRef.current?.focus();
+    }, 0);
+  }
+
+  function addTaskList() {
+    const cleaned = newListName.trim();
+    if (!cleaned) return;
+
+    const existing = taskLists.find(
+      (list) => list.name.toLowerCase() === cleaned.toLowerCase()
+    );
+
+    if (existing) {
+      selectTaskList(existing.id);
+      return;
+    }
+
+    const newList: TaskList = {
+      id: `list-${generateId()}`,
+      name: cleaned,
+      createdAt: new Date().toISOString(),
+    };
+
+    setTaskLists((prev) => mergeTaskLists(prev, [newList]));
+    selectTaskList(newList.id);
+  }
+
   function undoLastComplete() {
     if (!lastCompletedTaskId) return;
 
+    const taskToUndo = tasks.find((task) => task.id === lastCompletedTaskId);
+    const progressListId = taskToUndo?.listId ?? activeTaskList.id;
+
     rememberTaskChange(lastCompletedTaskId);
-    rememberProgressChange();
+    rememberProgressChange(formatDateInput(), progressListId);
     setTasks((prev) =>
       prev.map((task) =>
         task.id === lastCompletedTaskId ? { ...task, done: false } : task
       )
     );
-    setDailyProgress((prev) => ({
-      date: formatDateInput(),
-      completedTodayCount: Math.max(0, prev.completedTodayCount - 1),
-    }));
+    setDailyProgress((prev) =>
+      updateProgressCount(prev, progressListId, (count) => count - 1)
+    );
     setLastCompletedTaskId(null);
 
     window.setTimeout(() => {
@@ -1781,12 +2221,41 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     header: {
       background: "#3a3a3f",
-      padding: "14px 18px",
+      padding: "10px 18px 12px",
       textAlign: "center",
+    } as React.CSSProperties,
+    headerButton: {
+      position: "relative",
+      display: "inline-block",
+      border: "none",
+      background: "transparent",
+      color: "#ffffff",
+      padding: "4px 44px 10px",
+      cursor: "pointer",
+      fontFamily: "Arial, sans-serif",
+    } as React.CSSProperties,
+    headerWord: {
       fontSize: "48px",
       fontWeight: 800,
-      letterSpacing: "-2px",
+      letterSpacing: 0,
       lineHeight: 1,
+    } as React.CSSProperties,
+    listSplash: {
+      position: "absolute",
+      right: "18px",
+      bottom: "0",
+      transform: "rotate(-12deg)",
+      color: "#facc15",
+      fontSize: "14px",
+      fontWeight: 900,
+      letterSpacing: 0,
+      lineHeight: 1,
+      textShadow: "0 2px 0 rgba(0,0,0,0.45)",
+      maxWidth: "110px",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
     } as React.CSSProperties,
     banner: {
       background: "#c39af1",
@@ -2407,6 +2876,35 @@ export default function TodoeyPage() {
       fontWeight: 700,
       lineHeight: 1.35,
     } as React.CSSProperties,
+    listPickerGrid: {
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      marginBottom: "14px",
+    } as React.CSSProperties,
+    listOption: {
+      width: "100%",
+      border: "1px solid #3f3f48",
+      background: "#111114",
+      borderRadius: "14px",
+      padding: "13px 14px",
+      color: "#ffffff",
+      textAlign: "left",
+      cursor: "pointer",
+      fontWeight: 800,
+      fontSize: "17px",
+    } as React.CSSProperties,
+    listOptionActive: {
+      border: "1px solid #8b5cf6",
+      background: "#1b1525",
+      boxShadow: "inset 0 0 0 1px rgba(139, 92, 246, 0.45)",
+    } as React.CSSProperties,
+    listCreateRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 92px",
+      gap: "8px",
+      alignItems: "center",
+    } as React.CSSProperties,
     fieldGroup: {
       marginBottom: "12px",
     } as React.CSSProperties,
@@ -2519,7 +3017,17 @@ export default function TodoeyPage() {
     <div style={styles.page}>
       <div style={styles.wrap}>
         <div style={styles.shell}>
-          <div style={styles.header}>ToDooey</div>
+          <div style={styles.header}>
+            <button
+              style={styles.headerButton}
+              onClick={() => setListSwitcherOpen(true)}
+              aria-label="Switch task list"
+              title="Switch task list"
+            >
+              <span style={styles.headerWord}>ToDooey</span>
+              <span style={styles.listSplash}>{activeTaskList.name}</span>
+            </button>
+          </div>
 
           <div style={styles.banner}>
             {showCompleted
@@ -2926,6 +3434,47 @@ export default function TodoeyPage() {
           Recurring
         </button>
       </div>
+
+      {listSwitcherOpen ? (
+        <div style={styles.modalOverlay} onClick={() => setListSwitcherOpen(false)}>
+          <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalTitle}>Lists</div>
+
+            <div style={styles.listPickerGrid}>
+              {taskLists.map((list) => (
+                <button
+                  key={list.id}
+                  style={{
+                    ...styles.listOption,
+                    ...(list.id === activeTaskList.id ? styles.listOptionActive : {}),
+                  }}
+                  onClick={() => selectTaskList(list.id)}
+                >
+                  {list.name}
+                </button>
+              ))}
+            </div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>New list</label>
+              <div style={styles.listCreateRow}>
+                <input
+                  style={styles.input}
+                  value={newListName}
+                  onChange={(e) => setNewListName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addTaskList();
+                  }}
+                  placeholder="List name"
+                />
+                <button style={styles.saveButton} onClick={addTaskList}>
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {fullScreenImage ? (
         <div style={styles.fullScreenImageOverlay} onClick={closeFullScreenImage}>
