@@ -47,6 +47,7 @@ const PENDING_SYNC_KEY = "todoey-pending-sync-v1";
 const SYNC_BASE_KEY = "todoey-sync-base-v1";
 const TASK_LISTS_KEY = "todoey-task-lists-v1";
 const ACTIVE_LIST_KEY = "todoey-active-list-v1";
+const DELETED_TASK_LISTS_KEY = "todoey-deleted-task-lists-v1";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
 const DEFAULT_TASK_LISTS: TaskList[] = [
@@ -135,13 +136,25 @@ function normalizeTaskList(list: Partial<TaskList>): TaskList {
   };
 }
 
-function mergeTaskLists(...listGroups: TaskList[][]) {
-  const merged = new Map<string, TaskList>();
+function normalizeDeletedTaskListIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => normalizeListId(item))));
+}
 
-  DEFAULT_TASK_LISTS.forEach((list) => merged.set(list.id, list));
+function mergeTaskListsWithDeleted(deletedListIds: string[], ...listGroups: TaskList[][]) {
+  const merged = new Map<string, TaskList>();
+  const deleted = new Set(deletedListIds.map(normalizeListId));
+
+  DEFAULT_TASK_LISTS.forEach((list) => {
+    if (!deleted.has(list.id)) {
+      merged.set(list.id, list);
+    }
+  });
 
   listGroups.flat().forEach((list) => {
     const normalized = normalizeTaskList(list);
+    if (deleted.has(normalized.id)) return;
+
     const existing = merged.get(normalized.id);
 
     merged.set(normalized.id, {
@@ -150,7 +163,7 @@ function mergeTaskLists(...listGroups: TaskList[][]) {
     });
   });
 
-  return Array.from(merged.values()).sort((a, b) => {
+  const sorted = Array.from(merged.values()).sort((a, b) => {
     const defaultA = DEFAULT_TASK_LISTS.findIndex((list) => list.id === a.id);
     const defaultB = DEFAULT_TASK_LISTS.findIndex((list) => list.id === b.id);
 
@@ -162,32 +175,64 @@ function mergeTaskLists(...listGroups: TaskList[][]) {
 
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
+
+  return sorted.length > 0 ? sorted : [DEFAULT_TASK_LISTS[0]];
 }
 
-function loadLocalTaskLists() {
-  if (typeof window === "undefined") return DEFAULT_TASK_LISTS;
+function mergeTaskLists(...listGroups: TaskList[][]) {
+  return mergeTaskListsWithDeleted([], ...listGroups);
+}
 
-  const saved = window.localStorage.getItem(TASK_LISTS_KEY);
-  if (!saved) return DEFAULT_TASK_LISTS;
+function loadDeletedTaskListIds() {
+  if (typeof window === "undefined") return [];
+
+  const saved = window.localStorage.getItem(DELETED_TASK_LISTS_KEY);
+  if (!saved) return [];
 
   try {
-    const parsed = JSON.parse(saved) as Partial<TaskList>[];
-    return mergeTaskLists(parsed.map(normalizeTaskList));
+    return normalizeDeletedTaskListIds(JSON.parse(saved));
   } catch {
-    return DEFAULT_TASK_LISTS;
+    return [];
   }
 }
 
-function saveLocalTaskLists(lists: TaskList[]) {
+function saveDeletedTaskListIds(ids: string[]) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(TASK_LISTS_KEY, JSON.stringify(mergeTaskLists(lists)));
+  window.localStorage.setItem(
+    DELETED_TASK_LISTS_KEY,
+    JSON.stringify(normalizeDeletedTaskListIds(ids))
+  );
+}
+
+function loadLocalTaskLists(deletedListIds = loadDeletedTaskListIds()) {
+  if (typeof window === "undefined") return DEFAULT_TASK_LISTS;
+
+  const saved = window.localStorage.getItem(TASK_LISTS_KEY);
+  if (!saved) return mergeTaskListsWithDeleted(deletedListIds);
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<TaskList>[];
+    return mergeTaskListsWithDeleted(deletedListIds, parsed.map(normalizeTaskList));
+  } catch {
+    return mergeTaskListsWithDeleted(deletedListIds);
+  }
+}
+
+function saveLocalTaskLists(lists: TaskList[], deletedListIds: string[] = []) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    TASK_LISTS_KEY,
+    JSON.stringify(mergeTaskListsWithDeleted(deletedListIds, lists))
+  );
 }
 
 function loadActiveListId(lists: TaskList[]) {
   if (typeof window === "undefined") return DEFAULT_LIST_ID;
 
   const saved = normalizeListId(window.localStorage.getItem(ACTIVE_LIST_KEY));
-  return lists.some((list) => list.id === saved) ? saved : DEFAULT_LIST_ID;
+  return lists.some((list) => list.id === saved)
+    ? saved
+    : lists[0]?.id ?? DEFAULT_LIST_ID;
 }
 
 function saveActiveListId(listId: string) {
@@ -1037,23 +1082,46 @@ async function fetchCloudTaskLists(userId: string) {
   }
 }
 
-async function saveCloudTaskLists(userId: string, lists: TaskList[]) {
+async function saveCloudTaskLists(
+  userId: string,
+  lists: TaskList[],
+  deletedListIds: string[] = []
+) {
   if (!supabase) return "Supabase is not configured.";
 
   try {
-    const records = mergeTaskLists(lists).map((list) => ({
+    const normalizedDeletedListIds = normalizeDeletedTaskListIds(deletedListIds);
+    const records = mergeTaskListsWithDeleted(
+      normalizedDeletedListIds,
+      lists
+    ).map((list) => ({
       id: list.id,
       user_id: userId,
       name: list.name,
       created_at: list.createdAt,
     }));
 
-    const { error } = await supabase
-      .from("task_lists")
-      .upsert(records, { onConflict: "user_id,id" });
+    if (records.length > 0) {
+      const { error } = await supabase
+        .from("task_lists")
+        .upsert(records, { onConflict: "user_id,id" });
 
-    if (error && isMissingTaskListsTableError(error.message)) return "";
-    return error?.message ?? "";
+      if (error && isMissingTaskListsTableError(error.message)) return "";
+      if (error) return error.message;
+    }
+
+    if (normalizedDeletedListIds.length > 0) {
+      const { error } = await supabase
+        .from("task_lists")
+        .delete()
+        .eq("user_id", userId)
+        .in("id", normalizedDeletedListIds);
+
+      if (error && isMissingTaskListsTableError(error.message)) return "";
+      if (error) return error.message;
+    }
+
+    return "";
   } catch (error) {
     return error instanceof Error ? error.message : "Could not sync task lists.";
   }
@@ -1308,8 +1376,12 @@ export default function TodoeyPage() {
   const isDesktop = useIsDesktop();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskLists, setTaskLists] = useState<TaskList[]>(DEFAULT_TASK_LISTS);
+  const [deletedTaskListIds, setDeletedTaskListIds] = useState<string[]>([]);
   const [activeListId, setActiveListId] = useState(DEFAULT_LIST_ID);
   const [listSwitcherOpen, setListSwitcherOpen] = useState(false);
+  const [editingListId, setEditingListId] = useState<string | null>(null);
+  const [editListName, setEditListName] = useState("");
+  const [deleteListConfirmName, setDeleteListConfirmName] = useState("");
   const [newListName, setNewListName] = useState("");
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -1387,9 +1459,11 @@ export default function TodoeyPage() {
 
   useEffect(() => {
     const localTasks = loadLocalTasks();
-    const localTaskLists = loadLocalTaskLists();
+    const localDeletedTaskListIds = loadDeletedTaskListIds();
+    const localTaskLists = loadLocalTaskLists(localDeletedTaskListIds);
 
     window.setTimeout(() => {
+      setDeletedTaskListIds(localDeletedTaskListIds);
       setTaskLists(localTaskLists);
       setActiveListId(loadActiveListId(localTaskLists));
       setTasks(localTasks);
@@ -1407,8 +1481,9 @@ export default function TodoeyPage() {
 
   useEffect(() => {
     if (!tasksLoaded) return;
-    saveLocalTaskLists(taskLists);
-  }, [taskLists, tasksLoaded]);
+    saveDeletedTaskListIds(deletedTaskListIds);
+    saveLocalTaskLists(taskLists, deletedTaskListIds);
+  }, [deletedTaskListIds, taskLists, tasksLoaded]);
 
   useEffect(() => {
     if (!tasksLoaded) return;
@@ -1490,10 +1565,17 @@ export default function TodoeyPage() {
       const pendingSync = loadPendingSync(user!.id);
       const localTasks = loadLocalTasks();
       const localProgress = loadLocalDailyProgress();
-      const localTaskLists = loadLocalTaskLists();
+      const localDeletedTaskListIds = loadDeletedTaskListIds();
+      const localTaskLists = loadLocalTaskLists(localDeletedTaskListIds);
       const baseTasks = loadSyncBaseTasks(user!.id);
-      const cloudTaskLists = listResult.lists;
-      const nextTaskLists = mergeTaskLists(localTaskLists, cloudTaskLists);
+      const cloudTaskLists = listResult.lists.filter(
+        (list) => !localDeletedTaskListIds.includes(list.id)
+      );
+      const nextTaskLists = mergeTaskListsWithDeleted(
+        localDeletedTaskListIds,
+        localTaskLists,
+        cloudTaskLists
+      );
       const cloudTasks = taskResult.isMissingListColumn
         ? preserveLocalTaskListIds(taskResult.tasks, localTasks)
         : taskResult.tasks;
@@ -1528,6 +1610,7 @@ export default function TodoeyPage() {
       }
 
       setTaskLists(nextTaskLists);
+      setDeletedTaskListIds(localDeletedTaskListIds);
       setTasks(nextTasks);
       setTaskConflicts(mergeResult.conflicts);
 
@@ -1546,7 +1629,11 @@ export default function TodoeyPage() {
       if (listResult.error) {
         setAuthMessage(listResult.error);
       } else if (!listResult.isMissingTable) {
-        const listSyncError = await saveCloudTaskLists(user!.id, nextTaskLists);
+        const listSyncError = await saveCloudTaskLists(
+          user!.id,
+          nextTaskLists,
+          localDeletedTaskListIds
+        );
         if (!isCancelled && listSyncError) {
           setAuthMessage(listSyncError);
         }
@@ -1597,12 +1684,12 @@ export default function TodoeyPage() {
   useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
 
-    saveCloudTaskLists(user.id, taskLists).then((error) => {
+    saveCloudTaskLists(user.id, taskLists, deletedTaskListIds).then((error) => {
       if (error) {
         setAuthMessage(error);
       }
     });
-  }, [cloudLoaded, taskLists, tasksLoaded, user]);
+  }, [cloudLoaded, deletedTaskListIds, taskLists, tasksLoaded, user]);
 
   useEffect(() => {
     if (!supabase || !user || !cloudLoaded || !tasksLoaded) return;
@@ -1709,7 +1796,7 @@ export default function TodoeyPage() {
   }, [clearEditState, editingTaskId, fullScreenImage]);
 
   const activeTaskList = useMemo(() => {
-    return taskLists.find((list) => list.id === activeListId) ?? DEFAULT_TASK_LISTS[0];
+    return taskLists.find((list) => list.id === activeListId) ?? taskLists[0] ?? DEFAULT_TASK_LISTS[0];
   }, [activeListId, taskLists]);
 
   const activeListTasks = useMemo(() => {
@@ -1771,6 +1858,10 @@ export default function TodoeyPage() {
   const workloadForecast = useMemo(() => {
     return upcomingWorkload(activeListTasks);
   }, [activeListTasks]);
+
+  const editingTaskList = useMemo(() => {
+    return taskLists.find((list) => list.id === editingListId) ?? null;
+  }, [editingListId, taskLists]);
 
   const editingTask = useMemo(() => {
     return tasks.find((task) => task.id === editingTaskId) ?? null;
@@ -2159,7 +2250,92 @@ export default function TodoeyPage() {
 
   function openListSwitcher() {
     setNewListName("");
+    setEditingListId(null);
+    setEditListName("");
+    setDeleteListConfirmName("");
     setListSwitcherOpen(true);
+  }
+
+  function openListEditor(list: TaskList) {
+    setEditingListId(list.id);
+    setEditListName(list.name);
+    setDeleteListConfirmName("");
+  }
+
+  function closeListEditor() {
+    setEditingListId(null);
+    setEditListName("");
+    setDeleteListConfirmName("");
+  }
+
+  function saveListName() {
+    if (!editingTaskList) return;
+
+    const cleaned = editListName.trim();
+    if (!cleaned) return;
+
+    const duplicate = taskLists.some(
+      (list) =>
+        list.id !== editingTaskList.id &&
+        list.name.toLowerCase() === cleaned.toLowerCase()
+    );
+
+    if (duplicate) {
+      setAuthMessage("A list with that name already exists.");
+      return;
+    }
+
+    setTaskLists((prev) =>
+      prev.map((list) =>
+        list.id === editingTaskList.id ? { ...list, name: cleaned } : list
+      )
+    );
+    setEditListName(cleaned);
+    setAuthMessage("");
+  }
+
+  function deleteTaskList() {
+    if (!editingTaskList) return;
+    if (taskLists.length <= 1) return;
+    if (deleteListConfirmName.trim() !== editingTaskList.name) return;
+
+    const destinationList = taskLists.find((list) => list.id !== editingTaskList.id);
+    if (!destinationList) return;
+
+    const movedTaskIds = tasks
+      .filter((task) => normalizeListId(task.listId) === editingTaskList.id)
+      .map((task) => task.id);
+
+    movedTaskIds.forEach(rememberTaskChange);
+
+    setTasks((prev) =>
+      prev.map((task) =>
+        normalizeListId(task.listId) === editingTaskList.id
+          ? { ...task, listId: destinationList.id }
+          : task
+      )
+    );
+    setTaskLists((prev) => prev.filter((list) => list.id !== editingTaskList.id));
+    setDeletedTaskListIds((prev) =>
+      Array.from(new Set([...prev, editingTaskList.id]))
+    );
+    setDailyProgress((prev) =>
+      prev.filter((progress) => normalizeListId(progress.listId) !== editingTaskList.id)
+    );
+
+    if (activeTaskList.id === editingTaskList.id) {
+      setActiveListId(destinationList.id);
+    }
+
+    closeListEditor();
+    setNewListName("");
+    setAuthMessage(
+      movedTaskIds.length > 0
+        ? `Deleted list. Moved ${movedTaskIds.length} task${
+            movedTaskIds.length === 1 ? "" : "s"
+          } to ${destinationList.name}.`
+        : "Deleted list."
+    );
   }
 
   function cycleTaskList() {
@@ -2964,11 +3140,56 @@ export default function TodoeyPage() {
       background: "#1b1525",
       boxShadow: "inset 0 0 0 1px rgba(139, 92, 246, 0.45)",
     } as React.CSSProperties,
+    listOptionMeta: {
+      color: "#aeb0b8",
+      fontSize: "12px",
+      fontWeight: 700,
+      marginTop: "5px",
+    } as React.CSSProperties,
     listCreateRow: {
       display: "grid",
       gridTemplateColumns: "1fr 92px",
       gap: "8px",
       alignItems: "center",
+    } as React.CSSProperties,
+    listManageHeader: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "10px",
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    listMetaText: {
+      color: "#aeb0b8",
+      fontSize: "13px",
+      fontWeight: 700,
+      lineHeight: 1.35,
+      marginBottom: "12px",
+    } as React.CSSProperties,
+    dangerPanel: {
+      borderTop: "1px solid #2f2f35",
+      paddingTop: "14px",
+      marginTop: "14px",
+    } as React.CSSProperties,
+    dangerLabel: {
+      color: "#fca5a5",
+      fontSize: "13px",
+      fontWeight: 800,
+      marginBottom: "8px",
+    } as React.CSSProperties,
+    dangerButton: {
+      padding: "12px 14px",
+      borderRadius: "12px",
+      border: "1px solid rgba(239, 68, 68, 0.62)",
+      background: "rgba(127, 29, 29, 0.45)",
+      color: "#fecaca",
+      fontWeight: 800,
+      fontSize: "16px",
+      cursor: "pointer",
+    } as React.CSSProperties,
+    disabledDangerButton: {
+      opacity: 0.42,
+      cursor: "not-allowed",
     } as React.CSSProperties,
     fieldGroup: {
       marginBottom: "12px",
@@ -3513,41 +3734,130 @@ export default function TodoeyPage() {
       {listSwitcherOpen ? (
         <div style={styles.modalOverlay} onClick={() => setListSwitcherOpen(false)}>
           <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
-            <div style={styles.modalTitle}>Lists</div>
+            {editingTaskList ? (
+              <>
+                <div style={styles.listManageHeader}>
+                  <div style={{ ...styles.modalTitle, marginBottom: 0 }}>Edit list</div>
+                  <button style={styles.cancelButton} onClick={closeListEditor}>
+                    Back
+                  </button>
+                </div>
 
-            <div style={styles.listPickerGrid}>
-              {taskLists.map((list) => (
-                <button
-                  key={list.id}
-                  style={{
-                    ...styles.listOption,
-                    ...(list.id === activeTaskList.id ? styles.listOptionActive : {}),
-                  }}
-                  onClick={() => selectTaskList(list.id)}
-                >
-                  {list.name}
-                </button>
-              ))}
-            </div>
+                <div style={styles.fieldGroup}>
+                  <label style={styles.fieldLabel}>List name</label>
+                  <input
+                    style={styles.input}
+                    value={editListName}
+                    onChange={(event) => setEditListName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") saveListName();
+                    }}
+                  />
+                </div>
 
-            <div style={styles.fieldGroup}>
-              <label style={styles.fieldLabel}>New list</label>
-              <div style={styles.listCreateRow}>
-                <input
-                  style={styles.input}
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addTaskList();
-                  }}
-                  placeholder="List name"
-                />
-                <button style={styles.saveButton} onClick={addTaskList}>
-                  Add
-                </button>
+                <div style={styles.listMetaText}>
+                  {tasks.filter((task) => normalizeListId(task.listId) === editingTaskList.id).length}{" "}
+                  task
+                  {tasks.filter((task) => normalizeListId(task.listId) === editingTaskList.id).length === 1
+                    ? ""
+                    : "s"}{" "}
+                  in this list.
+                </div>
+
+                <div style={styles.modalActions}>
+                  <button
+                    style={styles.cancelButton}
+                    onClick={() => selectTaskList(editingTaskList.id)}
+                  >
+                    Open
+                  </button>
+                  <button style={styles.saveButton} onClick={saveListName}>
+                    Save
+                  </button>
+                </div>
+
+                <div style={styles.dangerPanel}>
+                  <div style={styles.dangerLabel}>Delete list</div>
+                  <div style={styles.listMetaText}>
+                    Tasks will be moved to{" "}
+                    {taskLists.find((list) => list.id !== editingTaskList.id)?.name ?? "another list"}.
+                    Type the list name to confirm.
+                  </div>
+                  <div style={styles.fieldGroup}>
+                    <input
+                      style={styles.input}
+                      value={deleteListConfirmName}
+                      onChange={(event) => setDeleteListConfirmName(event.target.value)}
+                      placeholder={editingTaskList.name}
+                    />
+                  </div>
+                  <button
+                    style={{
+                      ...styles.dangerButton,
+                      ...((deleteListConfirmName.trim() !== editingTaskList.name ||
+                        taskLists.length <= 1)
+                        ? styles.disabledDangerButton
+                        : {}),
+                    }}
+                    onClick={deleteTaskList}
+                    disabled={
+                      deleteListConfirmName.trim() !== editingTaskList.name ||
+                      taskLists.length <= 1
+                    }
+                  >
+                    Delete list
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={styles.modalTitle}>Lists</div>
+
+                <div style={styles.listPickerGrid}>
+                  {taskLists.map((list) => {
+                    const listTaskCount = tasks.filter(
+                      (task) => normalizeListId(task.listId) === list.id
+                    ).length;
+
+                    return (
+                      <button
+                        key={list.id}
+                        style={{
+                          ...styles.listOption,
+                          ...(list.id === activeTaskList.id ? styles.listOptionActive : {}),
+                        }}
+                        onClick={() => openListEditor(list)}
+                      >
+                        <div>{list.name}</div>
+                        <div style={styles.listOptionMeta}>
+                          {list.id === activeTaskList.id ? "Current - " : ""}
+                          {listTaskCount} task{listTaskCount === 1 ? "" : "s"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={styles.fieldGroup}>
+                  <label style={styles.fieldLabel}>New list</label>
+                  <div style={styles.listCreateRow}>
+                    <input
+                      style={styles.input}
+                      value={newListName}
+                      onChange={(e) => setNewListName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addTaskList();
+                      }}
+                      placeholder="List name"
+                    />
+                    <button style={styles.saveButton} onClick={addTaskList}>
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
               </div>
-            </div>
-          </div>
         </div>
       ) : null}
 
