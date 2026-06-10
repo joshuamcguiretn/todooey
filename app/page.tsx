@@ -2151,7 +2151,9 @@ export default function TodoeyPage() {
     setNewListName("");
 
     window.setTimeout(() => {
-      taskInputRef.current?.focus();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
     }, 0);
   }
 
@@ -2178,7 +2180,8 @@ export default function TodoeyPage() {
     }
   }
 
-  function startListLongPress() {
+  function startListLongPress(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
     clearListLongPressTimer();
     listLongPressTriggeredRef.current = false;
 
@@ -2201,7 +2204,6 @@ export default function TodoeyPage() {
 
   function cancelListPress() {
     clearListLongPressTimer();
-    listLongPressTriggeredRef.current = false;
   }
 
   function addTaskList() {
@@ -2275,6 +2277,8 @@ export default function TodoeyPage() {
       background: "#3a3a3f",
       padding: "10px 18px 12px",
       textAlign: "center",
+      userSelect: "none",
+      WebkitUserSelect: "none",
     } as React.CSSProperties,
     headerButton: {
       position: "relative",
@@ -2285,12 +2289,19 @@ export default function TodoeyPage() {
       padding: "4px 44px 10px",
       cursor: "pointer",
       fontFamily: "Arial, sans-serif",
+      touchAction: "manipulation",
+      userSelect: "none",
+      WebkitTapHighlightColor: "transparent",
+      WebkitTouchCallout: "none",
+      WebkitUserSelect: "none",
     } as React.CSSProperties,
     headerWord: {
       fontSize: "48px",
       fontWeight: 800,
       letterSpacing: 0,
       lineHeight: 1,
+      userSelect: "none",
+      WebkitUserSelect: "none",
     } as React.CSSProperties,
     listSplash: {
       position: "absolute",
@@ -2308,6 +2319,8 @@ export default function TodoeyPage() {
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
       pointerEvents: "none",
+      userSelect: "none",
+      WebkitUserSelect: "none",
     } as React.CSSProperties,
     banner: {
       background: "#c39af1",
