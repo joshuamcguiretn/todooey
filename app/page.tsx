@@ -1959,6 +1959,9 @@ export default function TodoeyPage() {
         : await supabase.auth.signUp({
             email,
             password: authPassword,
+            options: {
+              emailRedirectTo: window.location.origin,
+            },
           });
 
     setAuthBusy(false);
