@@ -2353,7 +2353,13 @@ export default function TodoeyPage() {
   }
 
   function selectTaskList(listId: string) {
-    setActiveListId(normalizeListId(listId));
+    const nextListId = normalizeListId(listId);
+
+    if (nextListId !== activeListId) {
+      resetNewTaskInputs();
+    }
+
+    setActiveListId(nextListId);
     setListSwitcherOpen(false);
     setShowCompleted(false);
     setNewListName("");
