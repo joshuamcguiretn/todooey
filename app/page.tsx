@@ -51,6 +51,8 @@ const DELETED_TASK_LISTS_KEY = "todoey-deleted-task-lists-v1";
 const DELETE_LIST_CONFIRMATION = "delete";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
+const EMAIL_REFERENCE_CODE_LENGTH = 6;
+const EMAIL_REFERENCE_DUE_DAYS = 3;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -124,8 +126,42 @@ function dateAtEarliestToday(date: string) {
   return date < today ? today : date;
 }
 
+function dateDaysFromToday(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return formatDateInput(date);
+}
+
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function generateEmailReferenceCode() {
+  const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const values = new Uint8Array(EMAIL_REFERENCE_CODE_LENGTH);
+
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(values);
+  } else {
+    values.forEach((_, index) => {
+      values[index] = Math.floor(Math.random() * 256);
+    });
+  }
+
+  return Array.from(values, (value) => characters[value % characters.length]).join("");
+}
+
+function hasTextSelectionInside(element: HTMLElement) {
+  if (typeof window === "undefined") return false;
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+    return false;
+  }
+
+  const anchorInside = Boolean(selection.anchorNode && element.contains(selection.anchorNode));
+  const focusInside = Boolean(selection.focusNode && element.contains(selection.focusNode));
+  return anchorInside || focusInside;
 }
 
 function normalizeListId(value: unknown) {
@@ -2090,6 +2126,15 @@ export default function TodoeyPage() {
     }, 0);
   }
 
+  function createEmailReferenceTask() {
+    const code = generateEmailReferenceCode();
+    setTitle((currentTitle) => {
+      const cleaned = currentTitle.trim();
+      return cleaned ? `${cleaned} ${code}` : code;
+    });
+    setDueDate(dateDaysFromToday(EMAIL_REFERENCE_DUE_DAYS));
+  }
+
   function openEditor(task: Task) {
     if (!editingTaskId && typeof window !== "undefined") {
       window.history.pushState({ todoeyOverlay: "edit" }, "", window.location.href);
@@ -2731,7 +2776,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 56px",
+      gridTemplateColumns: "1fr 48px 56px",
       gap: "10px",
       alignItems: "center",
       marginBottom: "10px",
@@ -2767,6 +2812,22 @@ export default function TodoeyPage() {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
+    } as React.CSSProperties,
+    emailReferenceButton: {
+      width: "48px",
+      height: "50px",
+      borderRadius: "12px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#ffffff",
+      fontSize: "22px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      lineHeight: 1,
+      userSelect: "none",
+      WebkitUserSelect: "none",
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
@@ -3448,6 +3509,14 @@ export default function TodoeyPage() {
                 </button>
               </div>
               <button
+                style={styles.emailReferenceButton}
+                onClick={createEmailReferenceTask}
+                aria-label="Create email reference code"
+                title="Create email reference code"
+              >
+                ✉
+              </button>
+              <button
                 style={styles.addButton}
                 onClick={addTask}
                 aria-label="Add task"
@@ -3707,7 +3776,13 @@ export default function TodoeyPage() {
                       </div>
                     ) : null}
 
-                    <div style={styles.taskBlock} onClick={() => openEditor(task)}>
+                    <div
+                      style={styles.taskBlock}
+                      onClick={(event) => {
+                        if (hasTextSelectionInside(event.currentTarget)) return;
+                        openEditor(task);
+                      }}
+                    >
                       <div style={styles.taskText}>{task.title}</div>
                       <div style={styles.dueCell}>
                         {viewMode === "recurring"
