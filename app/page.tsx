@@ -270,6 +270,17 @@ function dueText(dueDate: string) {
   return `In ${Math.abs(diffDays)} days`;
 }
 
+function displayDate(dueDate: string) {
+  const [year, month, day] = dueDate.split("-").map(Number);
+  if (!year || !month || !day) return dueDate;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(year, month - 1, day));
+}
+
 function taskConflictTitle(task: Task | null) {
   return task?.title || "Deleted task";
 }
@@ -1921,12 +1932,11 @@ export default function TodoeyPage() {
   }
 
   function openEditDatePicker() {
-    const nextDate = dateAtEarliestToday(editDueDate);
-    setEditDueDate(nextDate);
-
     if (!editDateInputRef.current) return;
 
-    editDateInputRef.current.value = nextDate;
+    const today = formatDateInput();
+    editDateInputRef.current.min = today;
+    editDateInputRef.current.value = editDueDate >= today ? editDueDate : "";
 
     try {
       editDateInputRef.current.showPicker();
@@ -4003,16 +4013,17 @@ export default function TodoeyPage() {
                     aria-label={`Change due date. Current date is ${editDueDate}.`}
                     title="Change due date"
                   >
-                    {dueText(editDueDate)}
+                    {displayDate(editDueDate)}
                   </button>
                   <input
                     ref={editDateInputRef}
                     style={styles.hiddenDateInput}
                     type="date"
                     tabIndex={-1}
-                    value={editDueDate}
                     min={formatDateInput()}
-                    onChange={(e) => setEditDueDate(dateAtEarliestToday(e.target.value))}
+                    onChange={(e) => {
+                      if (e.target.value) setEditDueDate(dateAtEarliestToday(e.target.value));
+                    }}
                   />
                 </div>
                 <button
