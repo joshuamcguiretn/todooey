@@ -781,15 +781,19 @@ function mergePendingTasks(
 
 function preserveLocalTaskListIds(cloudTasks: Task[], localTasks: Task[]) {
   const localById = new Map(localTasks.map((task) => [task.id, task]));
+  const preservedTaskIds: string[] = [];
 
-  return cloudTasks.map((task) => {
+  const tasks = cloudTasks.map((task) => {
     const localTask = localById.get(task.id);
     if (!localTask || task.listId !== DEFAULT_LIST_ID || localTask.listId === DEFAULT_LIST_ID) {
       return task;
     }
 
+    preservedTaskIds.push(task.id);
     return { ...task, listId: localTask.listId };
   });
+
+  return { tasks, preservedTaskIds };
 }
 
 function dbTaskToTask(task: DbTask): Task {
@@ -1577,9 +1581,8 @@ export default function TodoeyPage() {
         localTaskLists,
         cloudTaskLists
       );
-      const cloudTasks = taskResult.isMissingListColumn
-        ? preserveLocalTaskListIds(taskResult.tasks, localTasks)
-        : taskResult.tasks;
+      const listPreservation = preserveLocalTaskListIds(taskResult.tasks, localTasks);
+      const cloudTasks = listPreservation.tasks;
       const hasPendingTaskChanges = hasPendingTasks(pendingSync);
       const mergeResult = hasPendingTaskChanges
         ? mergePendingTasks(cloudTasks, localTasks, baseTasks, pendingSync)
@@ -1614,6 +1617,14 @@ export default function TodoeyPage() {
       setDeletedTaskListIds(localDeletedTaskListIds);
       setTasks(nextTasks);
       setTaskConflicts(mergeResult.conflicts);
+
+      listPreservation.preservedTaskIds
+        .filter((id) =>
+          nextTasks.some(
+            (task) => task.id === id && normalizeListId(task.listId) !== DEFAULT_LIST_ID
+          )
+        )
+        .forEach((id) => markPendingTaskChange(user!.id, id));
 
       setActiveListId((current) =>
         nextTaskLists.some((list) => list.id === current) ? current : DEFAULT_LIST_ID
@@ -2020,7 +2031,7 @@ export default function TodoeyPage() {
 
     const newTask: Task = {
       id: generateId(),
-      listId: activeTaskList.id,
+      listId: normalizeListId(activeListId),
       title: cleaned,
       dueDate,
       priority,
