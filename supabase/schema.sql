@@ -35,17 +35,17 @@ create table if not exists public.daily_progress (
   primary key (user_id, list_id, date)
 );
 
-create index if not exists task_lists_user_idx on public.task_lists (user_id);
-create index if not exists tasks_user_due_idx on public.tasks (user_id, due_date);
-create index if not exists tasks_user_list_due_idx on public.tasks (user_id, list_id, due_date);
-create index if not exists tasks_user_recurrence_idx on public.tasks (user_id, recurrence);
-create index if not exists daily_progress_user_list_date_idx on public.daily_progress (user_id, list_id, date);
-
 alter table public.tasks
 add column if not exists list_id text not null default 'home';
 
 alter table public.daily_progress
 add column if not exists list_id text not null default 'home';
+
+create index if not exists task_lists_user_idx on public.task_lists (user_id);
+create index if not exists tasks_user_due_idx on public.tasks (user_id, due_date);
+create index if not exists tasks_user_list_due_idx on public.tasks (user_id, list_id, due_date);
+create index if not exists tasks_user_recurrence_idx on public.tasks (user_id, recurrence);
+create index if not exists daily_progress_user_list_date_idx on public.daily_progress (user_id, list_id, date);
 
 do $$
 begin
@@ -76,6 +76,7 @@ check (recurrence in ('none', 'daily', 'weekly', 'monthly', 'fibonacci'));
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = public, pg_temp
 as $$
 begin
   new.updated_at = now();
