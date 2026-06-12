@@ -48,6 +48,7 @@ const SYNC_BASE_KEY = "todoey-sync-base-v1";
 const TASK_LISTS_KEY = "todoey-task-lists-v1";
 const ACTIVE_LIST_KEY = "todoey-active-list-v1";
 const DELETED_TASK_LISTS_KEY = "todoey-deleted-task-lists-v1";
+const DELETE_LIST_CONFIRMATION = "delete";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
 const DEFAULT_TASK_LISTS: TaskList[] = [
@@ -2300,7 +2301,7 @@ export default function TodoeyPage() {
   function deleteTaskList() {
     if (!editingTaskList) return;
     if (taskLists.length <= 1) return;
-    if (deleteListConfirmName.trim() !== editingTaskList.name) return;
+    if (deleteListConfirmName.trim().toLowerCase() !== DELETE_LIST_CONFIRMATION) return;
 
     const destinationList = taskLists.find((list) => list.id !== editingTaskList.id);
     if (!destinationList) return;
@@ -3784,27 +3785,27 @@ export default function TodoeyPage() {
                   <div style={styles.listMetaText}>
                     Tasks will be moved to{" "}
                     {taskLists.find((list) => list.id !== editingTaskList.id)?.name ?? "another list"}.
-                    Type the list name to confirm.
+                    Type delete to confirm.
                   </div>
                   <div style={styles.fieldGroup}>
                     <input
                       style={styles.input}
                       value={deleteListConfirmName}
                       onChange={(event) => setDeleteListConfirmName(event.target.value)}
-                      placeholder={editingTaskList.name}
+                      placeholder={DELETE_LIST_CONFIRMATION}
                     />
                   </div>
                   <button
                     style={{
                       ...styles.dangerButton,
-                      ...((deleteListConfirmName.trim() !== editingTaskList.name ||
+                      ...((deleteListConfirmName.trim().toLowerCase() !== DELETE_LIST_CONFIRMATION ||
                         taskLists.length <= 1)
                         ? styles.disabledDangerButton
                         : {}),
                     }}
                     onClick={deleteTaskList}
                     disabled={
-                      deleteListConfirmName.trim() !== editingTaskList.name ||
+                      deleteListConfirmName.trim().toLowerCase() !== DELETE_LIST_CONFIRMATION ||
                       taskLists.length <= 1
                     }
                   >
