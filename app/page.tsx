@@ -3599,14 +3599,6 @@ export default function TodoeyPage() {
                 onChange={(e) => setDueDate(e.target.value)}
               />
               <button
-                style={priority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
-                onClick={() => setPriority((prev) => (prev === 1 ? 2 : 1))}
-                aria-label="Toggle priority"
-                title="Toggle priority"
-              >
-                🔥
-              </button>
-              <button
                 style={recurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
                 onClick={() => {
                   if (recurrence === "none") {
@@ -3621,6 +3613,14 @@ export default function TodoeyPage() {
                 title="Toggle recurrence"
               >
                 🔄
+              </button>
+              <button
+                style={priority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
+                onClick={() => setPriority((prev) => (prev === 1 ? 2 : 1))}
+                aria-label="Toggle priority"
+                title="Toggle priority"
+              >
+                🔥
               </button>
               <label
                 style={newImageDataUrl ? styles.activeCameraIconButton : styles.toggleIconButton}
@@ -4123,7 +4123,7 @@ export default function TodoeyPage() {
             </div>
 
             <div style={styles.fieldGroup}>
-              <label style={styles.fieldLabel}>Date / Priority / Recurring</label>
+              <label style={styles.fieldLabel}>Date / Recurring / Priority</label>
               <div style={styles.modalMetaRow}>
                 <div style={styles.dateButtonWrap}>
                   <button
@@ -4147,14 +4147,6 @@ export default function TodoeyPage() {
                   />
                 </div>
                 <button
-                  style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
-                  onClick={() => setEditPriority((prev) => (prev === 1 ? 2 : 1))}
-                  aria-label="Toggle priority"
-                  title="Toggle priority"
-                >
-                  🔥
-                </button>
-                <button
                   style={editRecurrence !== "none" ? styles.activeToggleIconButton : styles.toggleIconButton}
                   onClick={() => {
                     if (editRecurrence === "none") {
@@ -4169,6 +4161,14 @@ export default function TodoeyPage() {
                   title="Toggle recurrence"
                 >
                   🔄
+                </button>
+                <button
+                  style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
+                  onClick={() => setEditPriority((prev) => (prev === 1 ? 2 : 1))}
+                  aria-label="Toggle priority"
+                  title="Toggle priority"
+                >
+                  🔥
                 </button>
               </div>
             </div>
