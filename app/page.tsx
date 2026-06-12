@@ -16,6 +16,7 @@ const WEEKDAY_NAMES = [
   "Friday",
   "Saturday",
 ];
+const WEEKDAY_SHORT_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 type Task = {
   id: string;
@@ -26,6 +27,7 @@ type Task = {
   recurrence: Recurrence;
   recurrenceInterval: number;
   recurrenceAnchored: boolean;
+  recurrenceWeekdays: number[];
   rotationTitles: string[];
   rotationTitleIndex: number;
   description: string;
@@ -51,6 +53,7 @@ const DELETED_TASK_LISTS_KEY = "todoey-deleted-task-lists-v1";
 const DELETE_LIST_CONFIRMATION = "delete";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
+const WEEKLY_INTERVAL_ENCODING_BASE = 1000;
 const EMAIL_REFERENCE_LETTER_COUNT = 3;
 const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
@@ -101,6 +104,7 @@ type DbTask = {
   recurrence: Recurrence;
   recurrence_interval: number;
   recurrence_anchored: boolean | null;
+  recurrence_weekdays?: number[] | null;
   rotation_titles: string[] | null;
   rotation_title_index: number | null;
   description: string | null;
@@ -354,7 +358,13 @@ function taskConflictDetails(task: Task | null) {
   if (task.done) pieces.push("Done");
   if (task.priority === 1) pieces.push("Priority");
   if (task.recurrence !== "none") {
-    pieces.push(recurrenceSummary(task.recurrence, task.recurrenceInterval));
+    pieces.push(
+      recurrenceSummary(
+        task.recurrence,
+        task.recurrenceInterval,
+        task.recurrenceWeekdays
+      )
+    );
   }
 
   return pieces.join(" - ");
@@ -385,6 +395,78 @@ function normalizeInterval(value: unknown) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return 1;
   return Math.max(1, Math.floor(numberValue));
+}
+
+function normalizeWeekdays(value: unknown) {
+  const items = Array.isArray(value) ? value : [];
+  return Array.from(
+    new Set(
+      items
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6)
+    )
+  ).sort((a, b) => a - b);
+}
+
+function weekdaySummary(weekdays: number[]) {
+  return normalizeWeekdays(weekdays)
+    .map((dayIndex) => WEEKDAY_SHORT_NAMES[dayIndex])
+    .join(", ");
+}
+
+function weekdayMask(weekdays: number[]) {
+  return normalizeWeekdays(weekdays).reduce((mask, weekday) => mask | (1 << weekday), 0);
+}
+
+function weekdaysFromMask(mask: number) {
+  return WEEKDAY_LABELS.map((_, index) => index).filter(
+    (weekday) => (mask & (1 << weekday)) !== 0
+  );
+}
+
+function encodeWeeklyInterval(
+  recurrence: Recurrence,
+  intervalInput: unknown,
+  recurrenceWeekdays: number[]
+) {
+  const interval = normalizeInterval(intervalInput);
+  const mask = weekdayMask(recurrenceWeekdays);
+
+  if (recurrence !== "weekly" || mask === 0) return interval;
+  return interval * WEEKLY_INTERVAL_ENCODING_BASE + mask;
+}
+
+function decodeWeeklyInterval(
+  recurrence: Recurrence,
+  intervalInput: unknown,
+  recurrenceWeekdaysInput: unknown
+) {
+  const interval = normalizeInterval(intervalInput);
+  const recurrenceWeekdays = normalizeWeekdays(recurrenceWeekdaysInput);
+
+  if (recurrence !== "weekly") {
+    return { interval, recurrenceWeekdays: [] };
+  }
+
+  if (recurrenceWeekdays.length > 0) {
+    return { interval, recurrenceWeekdays };
+  }
+
+  if (interval < WEEKLY_INTERVAL_ENCODING_BASE) {
+    return { interval, recurrenceWeekdays: [] };
+  }
+
+  const decodedInterval = Math.floor(interval / WEEKLY_INTERVAL_ENCODING_BASE);
+  const mask = interval % WEEKLY_INTERVAL_ENCODING_BASE;
+
+  if (mask <= 0 || mask > 127) {
+    return { interval, recurrenceWeekdays: [] };
+  }
+
+  return {
+    interval: normalizeInterval(decodedInterval),
+    recurrenceWeekdays: weekdaysFromMask(mask),
+  };
 }
 
 function normalizeRotationTitles(value: unknown) {
@@ -428,19 +510,29 @@ function normalizeRecurrence(value: unknown): Recurrence {
 function normalizeTask(task: Partial<Task>): Task {
   const title = task.title ?? "";
   const rotationTitles = normalizeRotationTitles(task.rotationTitles);
+  const recurrence = normalizeRecurrence(task.recurrence);
+  const dueDate = task.dueDate ?? formatDateInput();
+  const recurrenceAnchored =
+    typeof task.recurrenceAnchored === "boolean"
+      ? task.recurrenceAnchored
+      : recurrence !== "none";
+  const recurrenceWeekdays = normalizeWeekdays(task.recurrenceWeekdays);
 
   return {
     id: task.id ?? generateId(),
     listId: normalizeListId(task.listId),
     title,
-    dueDate: task.dueDate ?? formatDateInput(),
+    dueDate,
     priority: task.priority === 1 ? 1 : 2,
-    recurrence: normalizeRecurrence(task.recurrence),
+    recurrence,
     recurrenceInterval: normalizeInterval(task.recurrenceInterval ?? 1),
-    recurrenceAnchored:
-      typeof task.recurrenceAnchored === "boolean"
-        ? task.recurrenceAnchored
-        : normalizeRecurrence(task.recurrence) !== "none",
+    recurrenceAnchored,
+    recurrenceWeekdays:
+      recurrence === "weekly" && recurrenceAnchored && recurrenceWeekdays.length === 0
+        ? [weekdayFromDateInput(dueDate)]
+        : recurrence === "weekly"
+          ? recurrenceWeekdays
+          : [],
     rotationTitles,
     rotationTitleIndex: normalizeRotationIndex(
       task.rotationTitleIndex,
@@ -780,6 +872,7 @@ function taskSignature(task: Task | null) {
     recurrence: task.recurrence,
     recurrenceInterval: normalizeInterval(task.recurrenceInterval),
     recurrenceAnchored: task.recurrenceAnchored,
+    recurrenceWeekdays: normalizeWeekdays(task.recurrenceWeekdays),
     rotationTitles: task.rotationTitles,
     rotationTitleIndex: task.rotationTitleIndex,
     description: task.description,
@@ -876,15 +969,23 @@ function preserveLocalTaskListIds(cloudTasks: Task[], localTasks: Task[]) {
 }
 
 function dbTaskToTask(task: DbTask): Task {
+  const recurrence = normalizeRecurrence(task.recurrence);
+  const decodedWeekly = decodeWeeklyInterval(
+    recurrence,
+    task.recurrence_interval,
+    task.recurrence_weekdays
+  );
+
   return normalizeTask({
     id: task.id,
     listId: task.list_id ?? DEFAULT_LIST_ID,
     title: task.title,
     dueDate: task.due_date,
     priority: task.priority === 1 ? 1 : 2,
-    recurrence: normalizeRecurrence(task.recurrence),
-    recurrenceInterval: task.recurrence_interval,
+    recurrence,
+    recurrenceInterval: decodedWeekly.interval,
     recurrenceAnchored: task.recurrence_anchored ?? true,
+    recurrenceWeekdays: decodedWeekly.recurrenceWeekdays,
     rotationTitles: task.rotation_titles ?? [],
     rotationTitleIndex: task.rotation_title_index ?? 0,
     description: task.description ?? "",
@@ -897,7 +998,11 @@ function dbTaskToTask(task: DbTask): Task {
 function taskToDbTask(
   task: Task,
   userId: string,
-  options = { includeRecurrenceAnchor: true, includeListId: true }
+  options = {
+    includeRecurrenceAnchor: true,
+    includeListId: true,
+    includeRecurrenceWeekdays: true,
+  }
 ) {
   const record = {
     id: task.id,
@@ -906,7 +1011,13 @@ function taskToDbTask(
     due_date: task.dueDate,
     priority: task.priority,
     recurrence: task.recurrence,
-    recurrence_interval: normalizeInterval(task.recurrenceInterval),
+    recurrence_interval: options.includeRecurrenceWeekdays
+      ? normalizeInterval(task.recurrenceInterval)
+      : encodeWeeklyInterval(
+          task.recurrence,
+          task.recurrenceInterval,
+          task.recurrenceWeekdays
+        ),
     rotation_titles: task.rotationTitles,
     rotation_title_index: task.rotationTitleIndex,
     description: task.description,
@@ -921,6 +1032,9 @@ function taskToDbTask(
     ...(options.includeRecurrenceAnchor
       ? { recurrence_anchored: task.recurrenceAnchored }
       : {}),
+    ...(options.includeRecurrenceWeekdays
+      ? { recurrence_weekdays: normalizeWeekdays(task.recurrenceWeekdays) }
+      : {}),
   };
 }
 
@@ -932,15 +1046,24 @@ function isMissingListColumnError(message: string) {
   return message.includes("list_id") || message.includes("task_lists");
 }
 
+function isMissingRecurrenceWeekdaysError(message: string) {
+  return message.includes("recurrence_weekdays");
+}
+
 async function upsertTaskRecords(userId: string, tasks: Task[]) {
   if (!supabase || tasks.length === 0) return "";
 
   let includeRecurrenceAnchor = true;
   let includeListId = true;
+  let includeRecurrenceWeekdays = true;
 
   for (let attempt = 0; attempt < 4; attempt++) {
     const records = tasks.map((task) =>
-      taskToDbTask(task, userId, { includeRecurrenceAnchor, includeListId })
+      taskToDbTask(task, userId, {
+        includeRecurrenceAnchor,
+        includeListId,
+        includeRecurrenceWeekdays,
+      })
     );
     const { error } = await supabase.from("tasks").upsert(records);
 
@@ -953,6 +1076,11 @@ async function upsertTaskRecords(userId: string, tasks: Task[]) {
 
     if (includeListId && isMissingListColumnError(error.message)) {
       includeListId = false;
+      continue;
+    }
+
+    if (includeRecurrenceWeekdays && isMissingRecurrenceWeekdaysError(error.message)) {
+      includeRecurrenceWeekdays = false;
       continue;
     }
 
@@ -976,6 +1104,69 @@ function dateForNextWeekday(dayIndex: number) {
   const next = startOfDay(new Date());
   const daysUntil = (dayIndex - next.getDay() + 7) % 7;
   next.setDate(next.getDate() + daysUntil);
+  return formatDateInput(next);
+}
+
+function dateForSelectedWeekdays(weekdays: number[], currentDueDate: string) {
+  const selected = normalizeWeekdays(weekdays);
+  if (selected.length === 0) return currentDueDate;
+
+  const candidates = selected.map((dayIndex) => dateFromInput(dateForNextWeekday(dayIndex)));
+  const next = candidates.sort((a, b) => a.getTime() - b.getTime())[0];
+  return formatDateInput(next);
+}
+
+function advanceWeeklyRecurringDate(
+  dueDate: string,
+  intervalInput: unknown,
+  recurrenceWeekdays: number[]
+) {
+  const selected = normalizeWeekdays(recurrenceWeekdays);
+  const interval = normalizeInterval(intervalInput);
+
+  if (selected.length === 0) {
+    const next = dateFromInput(dueDate);
+    const today = startOfDay(new Date());
+
+    do {
+      next.setDate(next.getDate() + interval * 7);
+    } while (next <= today);
+
+    return formatDateInput(next);
+  }
+
+  const today = startOfDay(new Date());
+  const due = dateFromInput(dueDate);
+  const dueWeekday = due.getDay();
+  const sameWeekCandidates = selected
+    .filter((dayIndex) => dayIndex > dueWeekday)
+    .map((dayIndex) => {
+      const candidate = new Date(due);
+      candidate.setDate(due.getDate() + (dayIndex - dueWeekday));
+      return candidate;
+    })
+    .filter((candidate) => candidate > due && candidate > today)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (sameWeekCandidates[0]) {
+    return formatDateInput(sameWeekCandidates[0]);
+  }
+
+  const dueWeekStart = new Date(due);
+  dueWeekStart.setDate(due.getDate() - dueWeekday);
+
+  const nextWeekStart = new Date(dueWeekStart);
+  nextWeekStart.setDate(dueWeekStart.getDate() + interval * 7);
+
+  let next = new Date(nextWeekStart);
+  next.setDate(nextWeekStart.getDate() + selected[0]);
+
+  while (next <= today) {
+    nextWeekStart.setDate(nextWeekStart.getDate() + interval * 7);
+    next = new Date(nextWeekStart);
+    next.setDate(nextWeekStart.getDate() + selected[0]);
+  }
+
   return formatDateInput(next);
 }
 
@@ -1003,7 +1194,11 @@ function recurrenceUnit(recurrence: Recurrence, intervalInput: unknown) {
   return "";
 }
 
-function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
+function recurrenceSummary(
+  recurrence: Recurrence,
+  intervalInput: unknown,
+  recurrenceWeekdays: number[] = []
+) {
   if (recurrence === "none") return "One-time task";
   if (recurrence === "fibonacci") {
     const days = fibonacciDays(intervalInput);
@@ -1012,15 +1207,21 @@ function recurrenceSummary(recurrence: Recurrence, intervalInput: unknown) {
 
   const interval = normalizeInterval(intervalInput);
   const unit = recurrenceUnit(recurrence, interval);
+  const cadence = interval === 1 ? `Every ${unit}` : `Every ${interval} ${unit}`;
 
-  return `Every ${interval} ${unit}`;
+  if (recurrence === "weekly" && normalizeWeekdays(recurrenceWeekdays).length > 0) {
+    return `${cadence} on ${weekdaySummary(recurrenceWeekdays)}`;
+  }
+
+  return cadence;
 }
 
 function advanceRecurringDate(
   dueDate: string,
   recurrence: Recurrence,
   intervalInput: unknown,
-  recurrenceAnchored: boolean
+  recurrenceAnchored: boolean,
+  recurrenceWeekdays: number[] = []
 ) {
   const interval = normalizeInterval(intervalInput);
   const today = startOfDay(new Date());
@@ -1038,6 +1239,10 @@ function advanceRecurringDate(
       next.setDate(next.getDate() + interval);
     }
   } else if (recurrence === "weekly") {
+    if (recurrenceAnchored && normalizeWeekdays(recurrenceWeekdays).length > 0) {
+      return advanceWeeklyRecurringDate(dueDate, interval, recurrenceWeekdays);
+    }
+
     if (recurrenceAnchored) {
       do {
         next.setDate(next.getDate() + interval * 7);
@@ -1481,6 +1686,7 @@ export default function TodoeyPage() {
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState<number | "">(1);
   const [recurrenceAnchored, setRecurrenceAnchored] = useState(false);
+  const [recurrenceWeekdays, setRecurrenceWeekdays] = useState<number[]>([]);
   const [showRotationNames, setShowRotationNames] = useState(false);
   const [rotationText, setRotationText] = useState("");
   const [newDescription, setNewDescription] = useState("");
@@ -1499,6 +1705,7 @@ export default function TodoeyPage() {
   const [editRecurrence, setEditRecurrence] = useState<Recurrence>("none");
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState<number | "">(1);
   const [editRecurrenceAnchored, setEditRecurrenceAnchored] = useState(false);
+  const [editRecurrenceWeekdays, setEditRecurrenceWeekdays] = useState<number[]>([]);
   const [showEditRotationNames, setShowEditRotationNames] = useState(false);
   const [editRotationText, setEditRotationText] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -1537,6 +1744,7 @@ export default function TodoeyPage() {
     setEditRecurrence("none");
     setEditRecurrenceInterval(1);
     setEditRecurrenceAnchored(false);
+    setEditRecurrenceWeekdays([]);
     setShowEditRotationNames(false);
     setEditRotationText("");
     setEditDescription("");
@@ -1963,35 +2171,33 @@ export default function TodoeyPage() {
   const activeTaskConflict = taskConflicts[0] ?? null;
 
   function toggleWeeklyAnchor(dayIndex: number) {
-    const isSelected =
-      recurrence === "weekly" &&
-      recurrenceAnchored &&
-      weekdayFromDateInput(dueDate) === dayIndex;
-
-    if (isSelected) {
-      setRecurrenceAnchored(false);
-      return;
-    }
+    const currentWeekdays = recurrence === "weekly" ? recurrenceWeekdays : [];
+    const nextWeekdays = currentWeekdays.includes(dayIndex)
+      ? currentWeekdays.filter((weekday) => weekday !== dayIndex)
+      : normalizeWeekdays([...currentWeekdays, dayIndex]);
 
     setRecurrence("weekly");
-    setRecurrenceAnchored(true);
-    setDueDate(dateForNextWeekday(dayIndex));
+    setRecurrenceWeekdays(nextWeekdays);
+    setRecurrenceAnchored(nextWeekdays.length > 0);
+
+    if (nextWeekdays.length > 0) {
+      setDueDate(dateForSelectedWeekdays(nextWeekdays, dueDate));
+    }
   }
 
   function toggleEditWeeklyAnchor(dayIndex: number) {
-    const isSelected =
-      editRecurrence === "weekly" &&
-      editRecurrenceAnchored &&
-      weekdayFromDateInput(editDueDate) === dayIndex;
-
-    if (isSelected) {
-      setEditRecurrenceAnchored(false);
-      return;
-    }
+    const currentWeekdays = editRecurrence === "weekly" ? editRecurrenceWeekdays : [];
+    const nextWeekdays = currentWeekdays.includes(dayIndex)
+      ? currentWeekdays.filter((weekday) => weekday !== dayIndex)
+      : normalizeWeekdays([...currentWeekdays, dayIndex]);
 
     setEditRecurrence("weekly");
-    setEditRecurrenceAnchored(true);
-    setEditDueDate(dateForNextWeekday(dayIndex));
+    setEditRecurrenceWeekdays(nextWeekdays);
+    setEditRecurrenceAnchored(nextWeekdays.length > 0);
+
+    if (nextWeekdays.length > 0) {
+      setEditDueDate(dateForSelectedWeekdays(nextWeekdays, editDueDate));
+    }
   }
 
   function openEditDatePicker() {
@@ -2113,6 +2319,7 @@ export default function TodoeyPage() {
     setRecurrence("none");
     setRecurrenceInterval(1);
     setRecurrenceAnchored(false);
+    setRecurrenceWeekdays([]);
     setShowRotationNames(false);
     setRotationText("");
     setNewDescription("");
@@ -2124,6 +2331,10 @@ export default function TodoeyPage() {
     const rotationTitles = recurrence === "none" ? [] : normalizeRotationTitles(rotationText);
     const cleaned = rotationTitles[0] ?? title.trim();
     if (!cleaned) return;
+    const selectedWeekdays =
+      recurrence === "weekly" && recurrenceAnchored
+        ? normalizeWeekdays(recurrenceWeekdays)
+        : [];
 
     const newTask: Task = {
       id: generateId(),
@@ -2133,7 +2344,11 @@ export default function TodoeyPage() {
       priority,
       recurrence,
       recurrenceInterval: normalizeInterval(recurrenceInterval),
-      recurrenceAnchored: recurrence !== "fibonacci" && recurrenceAnchored,
+      recurrenceAnchored:
+        recurrence === "weekly"
+          ? selectedWeekdays.length > 0
+          : recurrence !== "fibonacci" && recurrenceAnchored,
+      recurrenceWeekdays: selectedWeekdays,
       rotationTitles,
       rotationTitleIndex: 0,
       description: newDescription.trim(),
@@ -2171,6 +2386,7 @@ export default function TodoeyPage() {
     setEditRecurrence(task.recurrence);
     setEditRecurrenceInterval(normalizeInterval(task.recurrenceInterval));
     setEditRecurrenceAnchored(task.recurrence !== "fibonacci" && task.recurrenceAnchored);
+    setEditRecurrenceWeekdays(task.recurrence === "weekly" ? task.recurrenceWeekdays : []);
     setShowEditRotationNames((task.rotationTitles ?? []).length > 0);
     setEditRotationText((task.rotationTitles ?? []).join("\n"));
     setEditDescription(task.description ?? "");
@@ -2216,6 +2432,10 @@ export default function TodoeyPage() {
 
     const rotationTitles =
       editRecurrence === "none" ? [] : normalizeRotationTitles(editRotationText);
+    const selectedWeekdays =
+      editRecurrence === "weekly" && editRecurrenceAnchored
+        ? normalizeWeekdays(editRecurrenceWeekdays)
+        : [];
 
     rememberTaskChange(taskIdToSave);
     setTasks((prev) =>
@@ -2236,7 +2456,10 @@ export default function TodoeyPage() {
                 recurrence: editRecurrence,
                 recurrenceInterval: normalizeInterval(editRecurrenceInterval),
                 recurrenceAnchored:
-                  editRecurrence !== "fibonacci" && editRecurrenceAnchored,
+                  editRecurrence === "weekly"
+                    ? selectedWeekdays.length > 0
+                    : editRecurrence !== "fibonacci" && editRecurrenceAnchored,
+                recurrenceWeekdays: selectedWeekdays,
                 rotationTitles,
                 rotationTitleIndex,
                 description: editDescription.trim(),
@@ -2296,7 +2519,8 @@ export default function TodoeyPage() {
                   task.dueDate,
                   task.recurrence,
                   task.recurrenceInterval,
-                  task.recurrenceAnchored
+                  task.recurrenceAnchored,
+                  task.recurrenceWeekdays
                 ),
                 recurrenceInterval: nextRecurrenceInterval(
                   task.recurrence,
@@ -3606,6 +3830,7 @@ export default function TodoeyPage() {
                   } else {
                     setRecurrence("none");
                     setRecurrenceAnchored(false);
+                    setRecurrenceWeekdays([]);
                     setShowRotationNames(false);
                   }
                 }}
@@ -3651,6 +3876,7 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setRecurrence("daily");
                       setRecurrenceAnchored(false);
+                      setRecurrenceWeekdays([]);
                     }}
                   >
                     Daily
@@ -3666,6 +3892,7 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setRecurrence("monthly");
                       setRecurrenceAnchored(false);
+                      setRecurrenceWeekdays([]);
                     }}
                   >
                     Monthly
@@ -3676,6 +3903,7 @@ export default function TodoeyPage() {
                       setRecurrence("fibonacci");
                       setRecurrenceInterval(1);
                       setRecurrenceAnchored(false);
+                      setRecurrenceWeekdays([]);
                     }}
                   >
                     Fibonacci
@@ -3720,8 +3948,7 @@ export default function TodoeyPage() {
                   {recurrence === "weekly" ? (
                     <div style={styles.weekdayPicker}>
                       {WEEKDAY_LABELS.map((label, index) => {
-                        const isSelected =
-                          recurrenceAnchored && weekdayFromDateInput(dueDate) === index;
+                        const isSelected = recurrenceWeekdays.includes(index);
 
                         return (
                           <button
@@ -3831,7 +4058,11 @@ export default function TodoeyPage() {
                       <div style={styles.taskText}>{task.title}</div>
                       <div style={styles.dueCell}>
                         {viewMode === "recurring"
-                          ? `${recurrenceSummary(task.recurrence, task.recurrenceInterval)} · Next: ${dueText(task.dueDate)}`
+                          ? `${recurrenceSummary(
+                              task.recurrence,
+                              task.recurrenceInterval,
+                              task.recurrenceWeekdays
+                            )} · Next: ${dueText(task.dueDate)}`
                           : dueText(task.dueDate)}
                       </div>
                     </div>
@@ -4154,6 +4385,7 @@ export default function TodoeyPage() {
                     } else {
                       setEditRecurrence("none");
                       setEditRecurrenceAnchored(false);
+                      setEditRecurrenceWeekdays([]);
                       setShowEditRotationNames(false);
                     }
                   }}
@@ -4181,6 +4413,7 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setEditRecurrence("daily");
                       setEditRecurrenceAnchored(false);
+                      setEditRecurrenceWeekdays([]);
                     }}
                   >
                     Daily
@@ -4196,6 +4429,7 @@ export default function TodoeyPage() {
                     onClick={() => {
                       setEditRecurrence("monthly");
                       setEditRecurrenceAnchored(false);
+                      setEditRecurrenceWeekdays([]);
                     }}
                   >
                     Monthly
@@ -4206,6 +4440,7 @@ export default function TodoeyPage() {
                       setEditRecurrence("fibonacci");
                       setEditRecurrenceInterval(1);
                       setEditRecurrenceAnchored(false);
+                      setEditRecurrenceWeekdays([]);
                     }}
                   >
                     Fibonacci
@@ -4250,9 +4485,7 @@ export default function TodoeyPage() {
                   {editRecurrence === "weekly" ? (
                     <div style={styles.weekdayPicker}>
                       {WEEKDAY_LABELS.map((label, index) => {
-                        const isSelected =
-                          editRecurrenceAnchored &&
-                          weekdayFromDateInput(editDueDate) === index;
+                        const isSelected = editRecurrenceWeekdays.includes(index);
 
                         return (
                           <button

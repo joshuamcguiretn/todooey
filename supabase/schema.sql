@@ -17,6 +17,7 @@ create table if not exists public.tasks (
   recurrence text not null default 'none' check (recurrence in ('none', 'daily', 'weekly', 'monthly', 'fibonacci')),
   recurrence_interval integer not null default 1 check (recurrence_interval >= 1),
   recurrence_anchored boolean not null default true,
+  recurrence_weekdays smallint[] not null default '{}',
   rotation_titles text[] not null default '{}',
   rotation_title_index integer not null default 0 check (rotation_title_index >= 0),
   description text not null default '',
@@ -65,6 +66,9 @@ add constraint daily_progress_pkey primary key (user_id, list_id, date);
 
 alter table public.tasks
 add column if not exists recurrence_anchored boolean not null default true;
+
+alter table public.tasks
+add column if not exists recurrence_weekdays smallint[] not null default '{}';
 
 alter table public.tasks
 drop constraint if exists tasks_recurrence_check;
