@@ -118,6 +118,12 @@ function formatDateInput(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function dateAtEarliestToday(date: string) {
+  const today = formatDateInput();
+  if (!date) return today;
+  return date < today ? today : date;
+}
+
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -3944,7 +3950,10 @@ export default function TodoeyPage() {
                   style={styles.input}
                   type="date"
                   value={editDueDate}
-                  onChange={(e) => setEditDueDate(e.target.value)}
+                  min={formatDateInput()}
+                  onFocus={() => setEditDueDate((current) => dateAtEarliestToday(current))}
+                  onPointerDown={() => setEditDueDate((current) => dateAtEarliestToday(current))}
+                  onChange={(e) => setEditDueDate(dateAtEarliestToday(e.target.value))}
                 />
                 <button
                   style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
