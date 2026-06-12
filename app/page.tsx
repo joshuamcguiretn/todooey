@@ -51,8 +51,10 @@ const DELETED_TASK_LISTS_KEY = "todoey-deleted-task-lists-v1";
 const DELETE_LIST_CONFIRMATION = "delete";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
-const EMAIL_REFERENCE_CODE_LENGTH = 6;
+const EMAIL_REFERENCE_LETTER_COUNT = 3;
+const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
+const EMAIL_REFERENCE_PATTERN = /\bRef:\s*[A-Z]{3}\d{3}\b/i;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -137,8 +139,10 @@ function generateId() {
 }
 
 function generateEmailReferenceCode() {
-  const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const values = new Uint8Array(EMAIL_REFERENCE_CODE_LENGTH);
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const digits = "0123456789";
+  const valueCount = EMAIL_REFERENCE_LETTER_COUNT + EMAIL_REFERENCE_DIGIT_COUNT;
+  const values = new Uint8Array(valueCount);
 
   if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(values);
@@ -148,7 +152,29 @@ function generateEmailReferenceCode() {
     });
   }
 
-  return Array.from(values, (value) => characters[value % characters.length]).join("");
+  const letterPart = Array.from(
+    values.slice(0, EMAIL_REFERENCE_LETTER_COUNT),
+    (value) => letters[value % letters.length]
+  ).join("");
+  const digitPart = Array.from(
+    values.slice(EMAIL_REFERENCE_LETTER_COUNT),
+    (value) => digits[value % digits.length]
+  ).join("");
+
+  return `${letterPart}${digitPart}`;
+}
+
+function withEmailReferenceCode(title: string, code: string) {
+  const reference = `Ref: ${code}`;
+  const cleaned = title.trim();
+
+  if (!cleaned) return reference;
+
+  if (EMAIL_REFERENCE_PATTERN.test(cleaned)) {
+    return cleaned.replace(EMAIL_REFERENCE_PATTERN, reference).replace(/\s{2,}/g, " ").trim();
+  }
+
+  return `${cleaned} ${reference}`;
 }
 
 function hasTextSelectionInside(element: HTMLElement) {
@@ -1486,6 +1512,7 @@ export default function TodoeyPage() {
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editDateInputRef = useRef<HTMLInputElement | null>(null);
+  const taskSelectionWasActiveOnPointerDownRef = useRef(false);
 
   function rememberTaskChange(taskId: string) {
     if (!user) return;
@@ -2128,10 +2155,7 @@ export default function TodoeyPage() {
 
   function createEmailReferenceTask() {
     const code = generateEmailReferenceCode();
-    setTitle((currentTitle) => {
-      const cleaned = currentTitle.trim();
-      return cleaned ? `${cleaned} ${code}` : code;
-    });
+    setTitle((currentTitle) => withEmailReferenceCode(currentTitle, code));
     setDueDate(dateDaysFromToday(EMAIL_REFERENCE_DUE_DAYS));
   }
 
@@ -3778,8 +3802,23 @@ export default function TodoeyPage() {
 
                     <div
                       style={styles.taskBlock}
+                      onPointerDown={(event) => {
+                        taskSelectionWasActiveOnPointerDownRef.current =
+                          hasTextSelectionInside(event.currentTarget);
+                      }}
                       onClick={(event) => {
-                        if (hasTextSelectionInside(event.currentTarget)) return;
+                        const selectionInsideTask = hasTextSelectionInside(event.currentTarget);
+                        if (
+                          selectionInsideTask &&
+                          !taskSelectionWasActiveOnPointerDownRef.current
+                        ) {
+                          return;
+                        }
+
+                        if (selectionInsideTask) {
+                          window.getSelection()?.removeAllRanges();
+                        }
+
                         openEditor(task);
                       }}
                     >
