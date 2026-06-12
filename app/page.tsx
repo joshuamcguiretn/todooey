@@ -1438,6 +1438,7 @@ export default function TodoeyPage() {
   const listLongPressTriggeredRef = useRef(false);
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editDateInputRef = useRef<HTMLInputElement | null>(null);
 
   function rememberTaskChange(taskId: string) {
     if (!user) return;
@@ -1917,6 +1918,22 @@ export default function TodoeyPage() {
     setEditRecurrence("weekly");
     setEditRecurrenceAnchored(true);
     setEditDueDate(dateForNextWeekday(dayIndex));
+  }
+
+  function openEditDatePicker() {
+    const nextDate = dateAtEarliestToday(editDueDate);
+    setEditDueDate(nextDate);
+
+    if (!editDateInputRef.current) return;
+
+    editDateInputRef.current.value = nextDate;
+
+    try {
+      editDateInputRef.current.showPicker();
+    } catch {
+      editDateInputRef.current.focus();
+      editDateInputRef.current.click();
+    }
   }
 
   function resolveTaskConflict(conflictId: string, choice: "local" | "cloud") {
@@ -2942,6 +2959,38 @@ export default function TodoeyPage() {
       boxSizing: "border-box",
       outline: "none",
     } as React.CSSProperties,
+    dateButtonWrap: {
+      position: "relative",
+      width: "100%",
+    } as React.CSSProperties,
+    dateButton: {
+      width: "100%",
+      height: "48px",
+      padding: "0 14px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "#09090b",
+      color: "#ffffff",
+      fontSize: "16px",
+      fontWeight: 700,
+      boxSizing: "border-box",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textAlign: "center",
+      userSelect: "none",
+      WebkitUserSelect: "none",
+    } as React.CSSProperties,
+    hiddenDateInput: {
+      position: "absolute",
+      left: 0,
+      bottom: 0,
+      width: "1px",
+      height: "1px",
+      opacity: 0,
+      pointerEvents: "none",
+    } as React.CSSProperties,
     textArea: {
       width: "100%",
       minHeight: "92px",
@@ -3946,15 +3995,26 @@ export default function TodoeyPage() {
             <div style={styles.fieldGroup}>
               <label style={styles.fieldLabel}>Date / Priority / Recurring</label>
               <div style={styles.modalMetaRow}>
-                <input
-                  style={styles.input}
-                  type="date"
-                  value={editDueDate}
-                  min={formatDateInput()}
-                  onFocus={() => setEditDueDate((current) => dateAtEarliestToday(current))}
-                  onPointerDown={() => setEditDueDate((current) => dateAtEarliestToday(current))}
-                  onChange={(e) => setEditDueDate(dateAtEarliestToday(e.target.value))}
-                />
+                <div style={styles.dateButtonWrap}>
+                  <button
+                    type="button"
+                    style={styles.dateButton}
+                    onClick={openEditDatePicker}
+                    aria-label={`Change due date. Current date is ${editDueDate}.`}
+                    title="Change due date"
+                  >
+                    {dueText(editDueDate)}
+                  </button>
+                  <input
+                    ref={editDateInputRef}
+                    style={styles.hiddenDateInput}
+                    type="date"
+                    tabIndex={-1}
+                    value={editDueDate}
+                    min={formatDateInput()}
+                    onChange={(e) => setEditDueDate(dateAtEarliestToday(e.target.value))}
+                  />
+                </div>
                 <button
                   style={editPriority === 1 ? styles.activeToggleIconButton : styles.toggleIconButton}
                   onClick={() => setEditPriority((prev) => (prev === 1 ? 2 : 1))}
