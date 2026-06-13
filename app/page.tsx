@@ -54,6 +54,9 @@ const DELETE_LIST_CONFIRMATION = "delete";
 const DEFAULT_LIST_ID = "home";
 const LIST_LONG_PRESS_MS = 520;
 const WEEKLY_INTERVAL_ENCODING_BASE = 1000;
+const IMAGE_TARGET_BYTES = 550 * 1024;
+const IMAGE_MAX_EDGE_STEPS = [1600, 1400, 1200, 1000, 850];
+const IMAGE_QUALITY_STEPS = [0.86, 0.8, 0.74, 0.68, 0.62];
 const EMAIL_REFERENCE_LETTER_COUNT = 3;
 const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
@@ -1270,37 +1273,84 @@ function nextRecurrenceInterval(recurrence: Recurrence, intervalInput: unknown) 
   return recurrence === "fibonacci" ? interval + 1 : interval;
 }
 
-function compressImage(file: File): Promise<string> {
+function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
-    reader.onload = () => {
-      const img = new Image();
-
-      img.onload = () => {
-        const maxSize = 1200;
-        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Could not compress image."));
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.78));
-      };
-
-      img.onerror = () => reject(new Error("Could not load image."));
-      img.src = String(reader.result);
-    };
-
+    reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error("Could not read image."));
     reader.readAsDataURL(file);
   });
+}
+
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not load image."));
+    img.src = dataUrl;
+  });
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality: number
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), mimeType, quality);
+  });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not finish image compression."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function compressImage(file: File): Promise<string> {
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  const img = await loadImage(sourceDataUrl);
+  const sourceMaxEdge = Math.max(img.width, img.height);
+  const candidateTypes = ["image/webp", "image/jpeg"];
+  let smallestBlob: Blob | null = null;
+
+  for (const maxEdge of IMAGE_MAX_EDGE_STEPS) {
+    const scale = Math.min(1, maxEdge / sourceMaxEdge);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not compress image.");
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    for (const mimeType of candidateTypes) {
+      for (const quality of IMAGE_QUALITY_STEPS) {
+        const blob = await canvasToBlob(canvas, mimeType, quality);
+        if (!blob || blob.size === 0 || blob.type !== mimeType) continue;
+
+        if (!smallestBlob || blob.size < smallestBlob.size) {
+          smallestBlob = blob;
+        }
+
+        if (blob.size <= IMAGE_TARGET_BYTES) {
+          return blobToDataUrl(blob);
+        }
+      }
+    }
+  }
+
+  if (!smallestBlob) {
+    throw new Error("Could not compress image.");
+  }
+
+  return blobToDataUrl(smallestBlob);
 }
 
 function useIsDesktop() {
