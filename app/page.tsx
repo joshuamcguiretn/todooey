@@ -61,6 +61,8 @@ const EMAIL_REFERENCE_LETTER_COUNT = 3;
 const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
 const EMAIL_REFERENCE_PATTERN = /\bRef:\s*[A-Z]{3}\d{3}\b/i;
+const LAUNCH_SPLASH_MIN_MS = 1200;
+const LAUNCH_SPLASH_MAX_MS = 5200;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -1730,6 +1732,8 @@ export default function TodoeyPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [cloudLoaded, setCloudLoaded] = useState(!isSupabaseConfigured);
+  const [launchSplashReleased, setLaunchSplashReleased] = useState(false);
+  const [launchSplashTimedOut, setLaunchSplashTimedOut] = useState(false);
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
@@ -1799,6 +1803,20 @@ export default function TodoeyPage() {
     setEditRotationText("");
     setEditDescription("");
     setEditImageDataUrl("");
+  }, []);
+
+  useEffect(() => {
+    const minTimer = window.setTimeout(() => {
+      setLaunchSplashReleased(true);
+    }, LAUNCH_SPLASH_MIN_MS);
+    const maxTimer = window.setTimeout(() => {
+      setLaunchSplashTimedOut(true);
+    }, LAUNCH_SPLASH_MAX_MS);
+
+    return () => {
+      window.clearTimeout(minTimer);
+      window.clearTimeout(maxTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -2826,6 +2844,24 @@ export default function TodoeyPage() {
   }
 
   const styles = {
+    launchSplash: {
+      position: "fixed",
+      inset: 0,
+      zIndex: 9999,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "#fbf8f0",
+      color: "#171717",
+    } as React.CSSProperties,
+    launchSplashArt: {
+      width: "min(84vw, 380px)",
+      height: "min(84vh, 820px)",
+      backgroundImage: 'url("/splash/todooey-splash-1170x2532.jpg")',
+      backgroundRepeat: "no-repeat",
+      backgroundPosition: "center",
+      backgroundSize: "contain",
+    } as React.CSSProperties,
     page: {
       minHeight: "100vh",
       background: "#0b0b0d",
@@ -3680,6 +3716,25 @@ export default function TodoeyPage() {
       cursor: "pointer",
     } as React.CSSProperties,
   };
+
+  const launchSplashReady =
+    launchSplashTimedOut ||
+    (authLoaded &&
+      tasksLoaded &&
+      dailyProgressLoaded &&
+      (!isSupabaseConfigured || !user || cloudLoaded));
+
+  if (!launchSplashReleased || !launchSplashReady) {
+    return (
+      <div
+        style={styles.launchSplash}
+        aria-label="Opening ToDooey"
+        role="status"
+      >
+        <div style={styles.launchSplashArt} />
+      </div>
+    );
+  }
 
   if (isSupabaseConfigured && (!authLoaded || !user)) {
     return (
