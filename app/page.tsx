@@ -18,6 +18,13 @@ const WEEKDAY_NAMES = [
 ];
 const WEEKDAY_SHORT_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+type Subtask = {
+  id: string;
+  title: string;
+  done: boolean;
+  createdAt: string;
+};
+
 type Task = {
   id: string;
   listId: string;
@@ -32,6 +39,9 @@ type Task = {
   rotationTitleIndex: number;
   description: string;
   imageDataUrl: string;
+  subtasks: Subtask[];
+  completedAt: string;
+  buddyGroupId: string;
   done: boolean;
   createdAt: string;
 };
@@ -44,6 +54,8 @@ type TaskList = {
 
 const STORAGE_KEY = "todoey-v1";
 const DAILY_PROGRESS_KEY = "todoey-daily-progress";
+const COMPLETION_HISTORY_KEY = "todoey-completion-history-v1";
+const REMINDER_SETTINGS_KEY = "todoey-reminder-settings-v1";
 const CLOUD_MIGRATION_KEY = "todoey-cloud-migrated";
 const PENDING_SYNC_KEY = "todoey-pending-sync-v1";
 const SYNC_BASE_KEY = "todoey-sync-base-v1";
@@ -61,6 +73,12 @@ const EMAIL_REFERENCE_LETTER_COUNT = 3;
 const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
 const EMAIL_REFERENCE_PATTERN = /\bRef:\s*[A-Z]{3}\d{3}\b/i;
+const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
+  enabled: false,
+  time: "09:00",
+  lastNotifiedDate: "",
+};
+const COMPLETION_HISTORY_LIMIT = 200;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -70,6 +88,21 @@ type DailyProgress = {
   date: string;
   listId: string;
   completedTodayCount: number;
+};
+
+type CompletionHistoryItem = {
+  id: string;
+  taskId: string;
+  listId: string;
+  title: string;
+  completedAt: string;
+  recurring: boolean;
+};
+
+type ReminderSettings = {
+  enabled: boolean;
+  time: string;
+  lastNotifiedDate: string;
 };
 
 type PendingSync = {
@@ -112,8 +145,20 @@ type DbTask = {
   rotation_title_index: number | null;
   description: string | null;
   image_data_url: string | null;
+  subtasks?: Subtask[] | string | null;
+  completed_at?: string | null;
+  buddy_group_id?: string | null;
   done: boolean;
   created_at: string;
+};
+
+type DbCompletionHistory = {
+  id: string;
+  task_id: string;
+  list_id: string | null;
+  title: string | null;
+  completed_at: string | null;
+  recurring: boolean | null;
 };
 
 type DbTaskList = {
@@ -200,6 +245,88 @@ function hasTextSelectionInside(element: HTMLElement) {
 function normalizeListId(value: unknown) {
   const listId = String(value ?? "").trim();
   return listId || DEFAULT_LIST_ID;
+}
+
+function normalizeBuddyGroupId(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function normalizeSubtasks(value: unknown): Subtask[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const title = item.trim();
+        if (!title) return null;
+
+        return {
+          id: generateId(),
+          title,
+          done: false,
+          createdAt: new Date().toISOString(),
+        };
+      }
+
+      if (!item || typeof item !== "object") return null;
+
+      const partial = item as Partial<Subtask>;
+      const title = String(partial.title ?? "").trim();
+      if (!title) return null;
+
+      return {
+        id: partial.id ?? generateId(),
+        title,
+        done: Boolean(partial.done),
+        createdAt: partial.createdAt ?? new Date().toISOString(),
+      };
+    })
+    .filter((item): item is Subtask => Boolean(item));
+}
+
+function normalizeCompletionHistoryItem(
+  item: Partial<CompletionHistoryItem> | null
+): CompletionHistoryItem | null {
+  if (!item?.taskId || !item?.title || !item?.completedAt) return null;
+
+  return {
+    id: item.id ?? generateId(),
+    taskId: String(item.taskId),
+    listId: normalizeListId(item.listId),
+    title: String(item.title).trim(),
+    completedAt: String(item.completedAt),
+    recurring: Boolean(item.recurring),
+  };
+}
+
+function normalizeCompletionHistory(value: unknown) {
+  if (!Array.isArray(value)) return [] as CompletionHistoryItem[];
+
+  return value
+    .map((item) =>
+      normalizeCompletionHistoryItem(item as Partial<CompletionHistoryItem>)
+    )
+    .filter((item): item is CompletionHistoryItem => Boolean(item))
+    .sort(
+      (a, b) =>
+        new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+    )
+    .slice(0, COMPLETION_HISTORY_LIMIT);
+}
+
+function normalizeReminderSettings(value: unknown): ReminderSettings {
+  if (!value || typeof value !== "object") return DEFAULT_REMINDER_SETTINGS;
+
+  const partial = value as Partial<ReminderSettings>;
+  const time = /^\d{2}:\d{2}$/.test(String(partial.time ?? ""))
+    ? String(partial.time)
+    : DEFAULT_REMINDER_SETTINGS.time;
+
+  return {
+    enabled: Boolean(partial.enabled),
+    time,
+    lastNotifiedDate: String(partial.lastNotifiedDate ?? ""),
+  };
 }
 
 function normalizeTaskList(list: Partial<TaskList>): TaskList {
@@ -373,6 +500,47 @@ function taskConflictDetails(task: Task | null) {
   return pieces.join(" - ");
 }
 
+function subtaskStats(task: Task) {
+  const subtasks = normalizeSubtasks(task.subtasks);
+  const doneCount = subtasks.filter((subtask) => subtask.done).length;
+
+  return {
+    doneCount,
+    totalCount: subtasks.length,
+  };
+}
+
+function subtaskSummary(task: Task) {
+  const { doneCount, totalCount } = subtaskStats(task);
+  if (totalCount === 0) return "";
+  return `${doneCount}/${totalCount} subtasks`;
+}
+
+function taskMatchesSearch(task: Task, query: string) {
+  const cleaned = query.trim().toLowerCase();
+  if (!cleaned) return true;
+
+  const pieces = [
+    task.title,
+    task.description,
+    dueText(task.dueDate),
+    recurrenceSummary(task.recurrence, task.recurrenceInterval, task.recurrenceWeekdays),
+    ...normalizeSubtasks(task.subtasks).map((subtask) => subtask.title),
+  ];
+
+  return pieces.join(" ").toLowerCase().includes(cleaned);
+}
+
+function completionHistoryMatchesSearch(item: CompletionHistoryItem, query: string) {
+  const cleaned = query.trim().toLowerCase();
+  if (!cleaned) return true;
+
+  return [item.title, item.completedAt, item.recurring ? "recurring" : ""]
+    .join(" ")
+    .toLowerCase()
+    .includes(cleaned);
+}
+
 function upcomingWorkload(tasks: Task[]) {
   const today = startOfDay(new Date());
   const counts: { label: string; count: number }[] = [];
@@ -544,6 +712,9 @@ function normalizeTask(task: Partial<Task>): Task {
     ),
     description: task.description ?? "",
     imageDataUrl: task.imageDataUrl ?? "",
+    subtasks: normalizeSubtasks(task.subtasks),
+    completedAt: task.completedAt ?? "",
+    buddyGroupId: normalizeBuddyGroupId(task.buddyGroupId),
     done: Boolean(task.done),
     createdAt: task.createdAt ?? new Date().toISOString(),
   };
@@ -561,6 +732,40 @@ function loadLocalTasks() {
   } catch {
     return [];
   }
+}
+
+function loadLocalCompletionHistory() {
+  if (typeof window === "undefined") return [] as CompletionHistoryItem[];
+
+  const saved = window.localStorage.getItem(COMPLETION_HISTORY_KEY);
+  if (!saved) return [];
+
+  try {
+    return normalizeCompletionHistory(JSON.parse(saved));
+  } catch {
+    return [];
+  }
+}
+
+function loadReminderSettings() {
+  if (typeof window === "undefined") return DEFAULT_REMINDER_SETTINGS;
+
+  const saved = window.localStorage.getItem(REMINDER_SETTINGS_KEY);
+  if (!saved) return DEFAULT_REMINDER_SETTINGS;
+
+  try {
+    return normalizeReminderSettings(JSON.parse(saved));
+  } catch {
+    return DEFAULT_REMINDER_SETTINGS;
+  }
+}
+
+function saveReminderSettings(settings: ReminderSettings) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    REMINDER_SETTINGS_KEY,
+    JSON.stringify(normalizeReminderSettings(settings))
+  );
 }
 
 function syncBaseKey(userId: string) {
@@ -880,6 +1085,9 @@ function taskSignature(task: Task | null) {
     rotationTitleIndex: task.rotationTitleIndex,
     description: task.description,
     imageDataUrl: task.imageDataUrl,
+    subtasks: normalizeSubtasks(task.subtasks),
+    completedAt: task.completedAt,
+    buddyGroupId: normalizeBuddyGroupId(task.buddyGroupId),
     done: task.done,
     createdAt: task.createdAt,
   });
@@ -993,6 +1201,9 @@ function dbTaskToTask(task: DbTask): Task {
     rotationTitleIndex: task.rotation_title_index ?? 0,
     description: task.description ?? "",
     imageDataUrl: task.image_data_url ?? "",
+    subtasks: normalizeSubtasks(task.subtasks),
+    completedAt: task.completed_at ?? "",
+    buddyGroupId: task.buddy_group_id ?? "",
     done: task.done,
     createdAt: task.created_at,
   });
@@ -1005,6 +1216,9 @@ function taskToDbTask(
     includeRecurrenceAnchor: true,
     includeListId: true,
     includeRecurrenceWeekdays: true,
+    includeSubtasks: true,
+    includeCompletedAt: true,
+    includeBuddyGroupId: true,
   }
 ) {
   const record = {
@@ -1038,6 +1252,11 @@ function taskToDbTask(
     ...(options.includeRecurrenceWeekdays
       ? { recurrence_weekdays: normalizeWeekdays(task.recurrenceWeekdays) }
       : {}),
+    ...(options.includeSubtasks ? { subtasks: normalizeSubtasks(task.subtasks) } : {}),
+    ...(options.includeCompletedAt ? { completed_at: task.completedAt || null } : {}),
+    ...(options.includeBuddyGroupId
+      ? { buddy_group_id: normalizeBuddyGroupId(task.buddyGroupId) || null }
+      : {}),
   };
 }
 
@@ -1053,19 +1272,37 @@ function isMissingRecurrenceWeekdaysError(message: string) {
   return message.includes("recurrence_weekdays");
 }
 
+function isMissingSubtasksError(message: string) {
+  return message.includes("subtasks");
+}
+
+function isMissingCompletedAtError(message: string) {
+  return message.includes("completed_at");
+}
+
+function isMissingBuddyGroupIdError(message: string) {
+  return message.includes("buddy_group_id");
+}
+
 async function upsertTaskRecords(userId: string, tasks: Task[]) {
   if (!supabase || tasks.length === 0) return "";
 
   let includeRecurrenceAnchor = true;
   let includeListId = true;
   let includeRecurrenceWeekdays = true;
+  let includeSubtasks = true;
+  let includeCompletedAt = true;
+  let includeBuddyGroupId = true;
 
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 7; attempt++) {
     const records = tasks.map((task) =>
       taskToDbTask(task, userId, {
         includeRecurrenceAnchor,
         includeListId,
         includeRecurrenceWeekdays,
+        includeSubtasks,
+        includeCompletedAt,
+        includeBuddyGroupId,
       })
     );
     const { error } = await supabase.from("tasks").upsert(records);
@@ -1084,6 +1321,21 @@ async function upsertTaskRecords(userId: string, tasks: Task[]) {
 
     if (includeRecurrenceWeekdays && isMissingRecurrenceWeekdaysError(error.message)) {
       includeRecurrenceWeekdays = false;
+      continue;
+    }
+
+    if (includeSubtasks && isMissingSubtasksError(error.message)) {
+      includeSubtasks = false;
+      continue;
+    }
+
+    if (includeCompletedAt && isMissingCompletedAtError(error.message)) {
+      includeCompletedAt = false;
+      continue;
+    }
+
+    if (includeBuddyGroupId && isMissingBuddyGroupIdError(error.message)) {
+      includeBuddyGroupId = false;
       continue;
     }
 
@@ -1407,6 +1659,67 @@ function passkeyErrorMessage(error: unknown) {
   return message || "Fingerprint sign-in did not finish.";
 }
 
+function reminderNotificationBody(tasks: Task[]) {
+  const dueTasks = tasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate));
+
+  if (dueTasks.length === 0) {
+    return "Nothing urgent today. A quick check-in keeps the list clean.";
+  }
+
+  const preview = dueTasks
+    .slice(0, 3)
+    .map((task) => task.title)
+    .join(", ");
+  const moreCount = dueTasks.length - 3;
+
+  return moreCount > 0
+    ? `${dueTasks.length} tasks need attention: ${preview}, and ${moreCount} more.`
+    : `${dueTasks.length} ${dueTasks.length === 1 ? "task needs" : "tasks need"} attention: ${preview}.`;
+}
+
+function nextReminderDelay(time: string, lastNotifiedDate: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const now = new Date();
+  const next = new Date();
+  next.setHours(
+    Number.isFinite(hours) ? hours : 9,
+    Number.isFinite(minutes) ? minutes : 0,
+    0,
+    0
+  );
+
+  if (next <= now || lastNotifiedDate === formatDateInput()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return Math.max(1000, next.getTime() - now.getTime());
+}
+
+async function showTodoeyNotification(body: string) {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+
+  const options: NotificationOptions = {
+    body,
+    icon: "/icons/todooey-icon-192.png",
+    badge: "/icons/todooey-icon-192.png",
+    tag: "todooey-daily-reminder",
+  };
+
+  if ("serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification("ToDooey", options);
+      return;
+    } catch {
+      new Notification("ToDooey", options);
+      return;
+    }
+  }
+
+  new Notification("ToDooey", options);
+}
+
 function dbTaskListToTaskList(list: DbTaskList): TaskList {
   return normalizeTaskList({
     id: list.id,
@@ -1571,6 +1884,113 @@ async function saveCloudTasks(userId: string, tasks: Task[]) {
     return "";
   } catch (error) {
     return error instanceof Error ? error.message : "Could not sync tasks.";
+  }
+}
+
+function isMissingCompletionHistoryTableError(message: string) {
+  return message.includes("task_completion_history") || message.includes("schema cache");
+}
+
+function dbCompletionHistoryToItem(
+  item: DbCompletionHistory
+): CompletionHistoryItem | null {
+  return normalizeCompletionHistoryItem({
+    id: item.id,
+    taskId: item.task_id,
+    listId: item.list_id ?? DEFAULT_LIST_ID,
+    title: item.title ?? "",
+    completedAt: item.completed_at ?? "",
+    recurring: Boolean(item.recurring),
+  });
+}
+
+function mergeCompletionHistoryItems(
+  first: CompletionHistoryItem[],
+  second: CompletionHistoryItem[]
+) {
+  const merged = new Map<string, CompletionHistoryItem>();
+
+  [...first, ...second].forEach((item) => {
+    merged.set(item.id, item);
+  });
+
+  return normalizeCompletionHistory(Array.from(merged.values()));
+}
+
+async function fetchCloudCompletionHistory(userId: string) {
+  if (!supabase) {
+    return {
+      history: [] as CompletionHistoryItem[],
+      error: "Supabase is not configured.",
+      isMissingTable: false,
+    };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("task_completion_history")
+      .select("id, task_id, list_id, title, completed_at, recurring")
+      .eq("user_id", userId)
+      .order("completed_at", { ascending: false })
+      .limit(COMPLETION_HISTORY_LIMIT);
+
+    if (error) {
+      if (isMissingCompletionHistoryTableError(error.message)) {
+        return { history: [] as CompletionHistoryItem[], error: "", isMissingTable: true };
+      }
+
+      return {
+        history: [] as CompletionHistoryItem[],
+        error: error.message,
+        isMissingTable: false,
+      };
+    }
+
+    return {
+      history: normalizeCompletionHistory(
+        ((data ?? []) as DbCompletionHistory[])
+          .map(dbCompletionHistoryToItem)
+          .filter((item): item is CompletionHistoryItem => Boolean(item))
+      ),
+      error: "",
+      isMissingTable: false,
+    };
+  } catch (error) {
+    return {
+      history: [] as CompletionHistoryItem[],
+      error: error instanceof Error ? error.message : "Could not load history.",
+      isMissingTable: false,
+    };
+  }
+}
+
+async function saveCloudCompletionHistory(
+  userId: string,
+  history: CompletionHistoryItem[]
+) {
+  if (!supabase) return "Supabase is not configured.";
+
+  const records = normalizeCompletionHistory(history).map((item) => ({
+    id: item.id,
+    user_id: userId,
+    task_id: item.taskId,
+    list_id: normalizeListId(item.listId),
+    title: item.title,
+    completed_at: item.completedAt,
+    recurring: item.recurring,
+  }));
+
+  if (records.length === 0) return "";
+
+  try {
+    const { error } = await supabase
+      .from("task_completion_history")
+      .upsert(records, { onConflict: "user_id,id" });
+
+    if (error && isMissingCompletionHistoryTableError(error.message)) return "";
+    return error?.message ?? "";
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not sync history.";
   }
 }
 
@@ -1782,10 +2202,18 @@ export default function TodoeyPage() {
   const [newImageDataUrl, setNewImageDataUrl] = useState("");
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"current" | "future" | "recurring">("current");
   const [dailyProgress, setDailyProgress] = useState<DailyProgress[]>([]);
   const [dailyProgressLoaded, setDailyProgressLoaded] = useState(false);
+  const [completionHistory, setCompletionHistory] = useState<CompletionHistoryItem[]>([]);
+  const [completionHistoryLoaded, setCompletionHistoryLoaded] = useState(false);
+  const [reminderSettings, setReminderSettings] = useState<ReminderSettings>(
+    DEFAULT_REMINDER_SETTINGS
+  );
+  const [reminderNotice, setReminderNotice] = useState("");
   const [lastCompletedTaskId, setLastCompletedTaskId] = useState<string | null>(null);
+  const [lastCompletionHistoryId, setLastCompletionHistoryId] = useState<string | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<string[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -1799,6 +2227,8 @@ export default function TodoeyPage() {
   const [editRotationText, setEditRotationText] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editImageDataUrl, setEditImageDataUrl] = useState("");
+  const [editSubtasks, setEditSubtasks] = useState<Subtask[]>([]);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [fullScreenImage, setFullScreenImage] = useState("");
   const [taskConflicts, setTaskConflicts] = useState<TaskConflict[]>([]);
   const [syncRetryNonce, setSyncRetryNonce] = useState(0);
@@ -1807,6 +2237,8 @@ export default function TodoeyPage() {
   const listLongPressTriggeredRef = useRef(false);
   const cloudTaskSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudProgressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudHistorySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editDateInputRef = useRef<HTMLInputElement | null>(null);
   const taskSelectionWasActiveOnPointerDownRef = useRef(false);
 
@@ -1838,6 +2270,8 @@ export default function TodoeyPage() {
     setEditRotationText("");
     setEditDescription("");
     setEditImageDataUrl("");
+    setEditSubtasks([]);
+    setNewSubtaskTitle("");
   }, []);
 
   useEffect(() => {
@@ -1886,6 +2320,72 @@ export default function TodoeyPage() {
       window.localStorage.setItem(DAILY_PROGRESS_KEY, JSON.stringify(dailyProgress));
     }
   }, [dailyProgress, dailyProgressLoaded]);
+
+  useEffect(() => {
+    const savedHistory = loadLocalCompletionHistory();
+    const savedReminderSettings = loadReminderSettings();
+    let isCancelled = false;
+
+    window.queueMicrotask(() => {
+      if (isCancelled) return;
+      setCompletionHistory(savedHistory);
+      setCompletionHistoryLoaded(true);
+      setReminderSettings(savedReminderSettings);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!completionHistoryLoaded) return;
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        COMPLETION_HISTORY_KEY,
+        JSON.stringify(normalizeCompletionHistory(completionHistory))
+      );
+    }
+  }, [completionHistory, completionHistoryLoaded]);
+
+  useEffect(() => {
+    saveReminderSettings(reminderSettings);
+  }, [reminderSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator)) return;
+
+    navigator.serviceWorker.register("/todooey-sw.js").catch(() => {
+      // Notifications still work without the service worker while the app is open.
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!tasksLoaded || !reminderSettings.enabled) return;
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+
+    if (reminderTimerRef.current) {
+      clearTimeout(reminderTimerRef.current);
+    }
+
+    reminderTimerRef.current = setTimeout(() => {
+      showTodoeyNotification(reminderNotificationBody(tasks)).then(() => {
+        setReminderSettings((current) => ({
+          ...current,
+          lastNotifiedDate: formatDateInput(),
+        }));
+      });
+    }, nextReminderDelay(reminderSettings.time, reminderSettings.lastNotifiedDate));
+
+    return () => {
+      if (reminderTimerRef.current) {
+        clearTimeout(reminderTimerRef.current);
+      }
+    };
+  }, [reminderSettings, tasks, tasksLoaded]);
 
   useEffect(() => {
     const savedProgress = loadLocalDailyProgress();
@@ -1972,11 +2472,12 @@ export default function TodoeyPage() {
     async function loadCloudData() {
       setCloudLoaded(false);
 
-      const [taskResult, progressResult, listResult] =
+      const [taskResult, progressResult, listResult, historyResult] =
         await Promise.all([
           fetchCloudTasks(user!.id),
           fetchCloudDailyProgress(user!.id),
           fetchCloudTaskLists(user!.id),
+          fetchCloudCompletionHistory(user!.id),
         ]);
 
       if (isCancelled) return;
@@ -1990,6 +2491,7 @@ export default function TodoeyPage() {
       const pendingSync = loadPendingSync(user!.id);
       const localTasks = loadLocalTasks();
       const localProgress = loadLocalDailyProgress();
+      const localHistory = loadLocalCompletionHistory();
       const localDeletedTaskListIds = loadDeletedTaskListIds();
       const localTaskLists = loadLocalTaskLists(localDeletedTaskListIds);
       const baseTasks = loadSyncBaseTasks(user!.id);
@@ -2078,6 +2580,16 @@ export default function TodoeyPage() {
           hasPendingProgress(pendingSync)
             ? mergeDailyProgressItems(progressResult.progress, localProgress, pendingSync)
             : progressResult.progress
+        );
+      }
+
+      if (historyResult.error) {
+        setAuthMessage(historyResult.error);
+      } else {
+        setCompletionHistory(
+          historyResult.isMissingTable
+            ? localHistory
+            : mergeCompletionHistoryItems(historyResult.history, localHistory)
         );
       }
 
@@ -2203,6 +2715,28 @@ export default function TodoeyPage() {
   }, [cloudLoaded, dailyProgress, dailyProgressLoaded, syncRetryNonce, user]);
 
   useEffect(() => {
+    if (!supabase || !user || !cloudLoaded || !completionHistoryLoaded) return;
+
+    if (cloudHistorySaveTimerRef.current) {
+      clearTimeout(cloudHistorySaveTimerRef.current);
+    }
+
+    cloudHistorySaveTimerRef.current = setTimeout(() => {
+      saveCloudCompletionHistory(user.id, completionHistory).then((error) => {
+        if (error) {
+          setAuthMessage(error);
+        }
+      });
+    }, 650);
+
+    return () => {
+      if (cloudHistorySaveTimerRef.current) {
+        clearTimeout(cloudHistorySaveTimerRef.current);
+      }
+    };
+  }, [cloudLoaded, completionHistory, completionHistoryLoaded, user]);
+
+  useEffect(() => {
     taskInputRef.current?.focus();
   }, []);
 
@@ -2244,26 +2778,41 @@ export default function TodoeyPage() {
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     });
 
-    if (viewMode === "future") {
+    const modeTasks = (() => {
+      if (viewMode === "future") {
+        return sorted.filter(
+          (task) => !task.done && !isDueTodayOrOlder(task.dueDate)
+        );
+      }
+
+      if (viewMode === "recurring") {
+        return sorted.filter(
+          (task) => !task.done && task.recurrence !== "none"
+        );
+      }
+
+      if (showCompleted) {
+        return sorted.filter((task) => task.done);
+      }
+
       return sorted.filter(
-        (task) => !task.done && !isDueTodayOrOlder(task.dueDate)
+        (task) => !task.done && isDueTodayOrOlder(task.dueDate)
       );
-    }
+    })();
 
-    if (viewMode === "recurring") {
-      return sorted.filter(
-        (task) => !task.done && task.recurrence !== "none"
-      );
-    }
+    return modeTasks.filter((task) => taskMatchesSearch(task, searchQuery));
+  }, [activeListTasks, searchQuery, showCompleted, viewMode]);
 
-    if (showCompleted) {
-      return sorted.filter((task) => task.done);
-    }
+  const visibleCompletionHistory = useMemo(() => {
+    if (!showCompleted) return [] as CompletionHistoryItem[];
 
-    return sorted.filter(
-      (task) => !task.done && isDueTodayOrOlder(task.dueDate)
-    );
-  }, [activeListTasks, showCompleted, viewMode]);
+    return completionHistory
+      .filter((item) => normalizeListId(item.listId) === activeTaskList.id)
+      .filter((item) => completionHistoryMatchesSearch(item, searchQuery))
+      .slice(0, 60);
+  }, [activeTaskList.id, completionHistory, searchQuery, showCompleted]);
+  const hasVisibleContent =
+    visibleTasks.length > 0 || visibleCompletionHistory.length > 0;
 
   const activeDueCount = useMemo(() => {
     return activeListTasks.filter((task) => !task.done && isDueTodayOrOlder(task.dueDate)).length;
@@ -2490,6 +3039,37 @@ export default function TodoeyPage() {
     }
   }
 
+  async function toggleDailyReminder() {
+    if (reminderSettings.enabled) {
+      setReminderSettings(DEFAULT_REMINDER_SETTINGS);
+      setReminderNotice("Daily reminder turned off.");
+      return;
+    }
+
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setReminderNotice("Notifications are not available on this device.");
+      return;
+    }
+
+    let permission = Notification.permission;
+
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission !== "granted") {
+      setReminderNotice("Notifications are blocked for ToDooey.");
+      return;
+    }
+
+    setReminderSettings({
+      enabled: true,
+      time: DEFAULT_REMINDER_SETTINGS.time,
+      lastNotifiedDate: "",
+    });
+    setReminderNotice("Daily reminder set for 9:00 AM.");
+  }
+
   async function signOut() {
     if (!supabase || authBusy || passkeyBusy) return;
 
@@ -2550,6 +3130,9 @@ export default function TodoeyPage() {
       rotationTitleIndex: 0,
       description: newDescription.trim(),
       imageDataUrl: newImageDataUrl,
+      subtasks: [],
+      completedAt: "",
+      buddyGroupId: "",
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -2588,6 +3171,8 @@ export default function TodoeyPage() {
     setEditRotationText((task.rotationTitles ?? []).join("\n"));
     setEditDescription(task.description ?? "");
     setEditImageDataUrl(task.imageDataUrl ?? "");
+    setEditSubtasks(normalizeSubtasks(task.subtasks));
+    setNewSubtaskTitle("");
   }
 
   function closeEditor() {
@@ -2661,12 +3246,62 @@ export default function TodoeyPage() {
                 rotationTitleIndex,
                 description: editDescription.trim(),
                 imageDataUrl: editImageDataUrl,
+                subtasks: normalizeSubtasks(editSubtasks),
               };
             })()
           : task
       )
     );
     closeEditor();
+  }
+
+  function addEditSubtask() {
+    const cleaned = newSubtaskTitle.trim();
+    if (!cleaned) return;
+
+    setEditSubtasks((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        title: cleaned,
+        done: false,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    setNewSubtaskTitle("");
+  }
+
+  function toggleEditSubtask(id: string) {
+    setEditSubtasks((prev) =>
+      prev.map((subtask) =>
+        subtask.id === id ? { ...subtask, done: !subtask.done } : subtask
+      )
+    );
+  }
+
+  function deleteEditSubtask(id: string) {
+    setEditSubtasks((prev) => prev.filter((subtask) => subtask.id !== id));
+  }
+
+  function recordCompletion(task: Task, isRecurring: boolean) {
+    const completedAt = new Date().toISOString();
+    const historyId = generateId();
+
+    setCompletionHistory((prev) =>
+      normalizeCompletionHistory([
+        {
+          id: historyId,
+          taskId: task.id,
+          listId: task.listId,
+          title: task.title,
+          completedAt,
+          recurring: isRecurring,
+        },
+        ...prev,
+      ])
+    );
+
+    return { completedAt, historyId };
   }
 
   function toggleDone(id: string) {
@@ -2691,6 +3326,7 @@ export default function TodoeyPage() {
       window.setTimeout(() => {
         rememberTaskChange(id);
         rememberProgressChange(formatDateInput(), taskToComplete.listId);
+        const completionRecord = recordCompletion(taskToComplete, isRecurring);
 
         setTasks((prev) =>
           prev.map((task) => {
@@ -2725,11 +3361,20 @@ export default function TodoeyPage() {
                 ),
                 rotationTitles,
                 rotationTitleIndex: nextRotationTitleIndex,
+                completedAt: completionRecord.completedAt,
                 done: false,
               };
             }
 
-            return { ...task, done: true };
+            return {
+              ...task,
+              subtasks: normalizeSubtasks(task.subtasks).map((subtask) => ({
+                ...subtask,
+                done: true,
+              })),
+              completedAt: completionRecord.completedAt,
+              done: true,
+            };
           })
         );
 
@@ -2741,6 +3386,7 @@ export default function TodoeyPage() {
 
         if (!isRecurring) {
           setLastCompletedTaskId(id);
+          setLastCompletionHistoryId(completionRecord.historyId);
           setShowCompleted(false);
         }
       }, 420);
@@ -2749,12 +3395,20 @@ export default function TodoeyPage() {
     }
 
     setTasks((prev) =>
-      prev.map((task) => (task.id === id ? { ...task, done: false } : task))
+      prev.map((task) =>
+        task.id === id ? { ...task, done: false, completedAt: "" } : task
+      )
     );
     rememberTaskChange(id);
+    setCompletionHistory((prev) => {
+      const newestTaskHistory = prev.find((item) => item.taskId === id);
+      if (!newestTaskHistory) return prev;
+      return prev.filter((item) => item.id !== newestTaskHistory.id);
+    });
 
     if (lastCompletedTaskId === id) {
       setLastCompletedTaskId(null);
+      setLastCompletionHistoryId(null);
     }
   }
 
@@ -2959,13 +3613,21 @@ export default function TodoeyPage() {
     rememberProgressChange(formatDateInput(), progressListId);
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === lastCompletedTaskId ? { ...task, done: false } : task
+        task.id === lastCompletedTaskId
+          ? { ...task, done: false, completedAt: "" }
+          : task
       )
     );
+    if (lastCompletionHistoryId) {
+      setCompletionHistory((prev) =>
+        prev.filter((item) => item.id !== lastCompletionHistoryId)
+      );
+    }
     setDailyProgress((prev) =>
       updateProgressCount(prev, progressListId, (count) => count - 1)
     );
     setLastCompletedTaskId(null);
+    setLastCompletionHistoryId(null);
 
     window.setTimeout(() => {
       taskInputRef.current?.focus();
@@ -3134,6 +3796,35 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     section: {
       padding: "14px 12px 96px",
+    } as React.CSSProperties,
+    searchRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 42px",
+      gap: "8px",
+      marginBottom: "10px",
+    } as React.CSSProperties,
+    searchInput: {
+      width: "100%",
+      border: "1px solid #2f2f35",
+      borderRadius: "12px",
+      background: "#111114",
+      color: "#ffffff",
+      padding: "11px 12px",
+      fontSize: "15px",
+      fontWeight: 700,
+      outline: "none",
+    } as React.CSSProperties,
+    clearSearchButton: {
+      width: "42px",
+      height: "42px",
+      borderRadius: "12px",
+      border: "1px solid #3f3f48",
+      background: "#17171a",
+      color: "#d7d7dc",
+      fontSize: "22px",
+      fontWeight: 800,
+      cursor: "pointer",
+      lineHeight: 1,
     } as React.CSSProperties,
     viewToggleRow: {
       display: "flex",
@@ -3677,6 +4368,13 @@ export default function TodoeyPage() {
       marginTop: "4px",
       paddingLeft: "10px",
     } as React.CSSProperties,
+    taskMetaLine: {
+      fontSize: "12px",
+      color: "#c4b5fd",
+      marginTop: "4px",
+      paddingLeft: "10px",
+      fontWeight: 800,
+    } as React.CSSProperties,
     fireCell: {
       fontSize: "18px",
       lineHeight: 1,
@@ -3862,6 +4560,85 @@ export default function TodoeyPage() {
       color: "#aeb0b8",
       fontWeight: 700,
     } as React.CSSProperties,
+    subtaskList: {
+      display: "grid",
+      gap: "8px",
+      marginBottom: "8px",
+    } as React.CSSProperties,
+    subtaskRow: {
+      display: "grid",
+      gridTemplateColumns: "28px 1fr 38px",
+      gap: "8px",
+      alignItems: "center",
+      border: "1px solid #2f2f35",
+      background: "#111114",
+      borderRadius: "12px",
+      padding: "8px",
+    } as React.CSSProperties,
+    subtaskCheckbox: {
+      width: "20px",
+      height: "20px",
+      accentColor: "#8b5cf6",
+    } as React.CSSProperties,
+    subtaskTitle: {
+      color: "#ffffff",
+      fontSize: "14px",
+      fontWeight: 700,
+      lineHeight: 1.25,
+      overflowWrap: "anywhere",
+    } as React.CSSProperties,
+    subtaskTitleDone: {
+      color: "#898992",
+      textDecoration: "line-through",
+    } as React.CSSProperties,
+    subtaskDeleteButton: {
+      width: "34px",
+      height: "34px",
+      borderRadius: "10px",
+      border: "1px solid #3f3f48",
+      background: "transparent",
+      color: "#fca5a5",
+      fontSize: "20px",
+      fontWeight: 800,
+      cursor: "pointer",
+      lineHeight: 1,
+    } as React.CSSProperties,
+    subtaskCreateRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 74px",
+      gap: "8px",
+      alignItems: "center",
+    } as React.CSSProperties,
+    historyList: {
+      marginTop: "12px",
+      border: "1px solid #2f2f35",
+      borderRadius: "14px",
+      overflow: "hidden",
+      background: "#111114",
+    } as React.CSSProperties,
+    historyHeader: {
+      padding: "10px 12px",
+      borderBottom: "1px solid #2f2f35",
+      color: "#d7d7dc",
+      fontSize: "13px",
+      fontWeight: 800,
+    } as React.CSSProperties,
+    historyItem: {
+      padding: "11px 12px",
+      borderBottom: "1px solid #24242a",
+    } as React.CSSProperties,
+    historyTitle: {
+      color: "#ffffff",
+      fontSize: "14px",
+      fontWeight: 800,
+      overflowWrap: "anywhere",
+    } as React.CSSProperties,
+    historyMeta: {
+      color: "#aeb0b8",
+      fontSize: "12px",
+      fontWeight: 700,
+      marginTop: "4px",
+    } as React.CSSProperties,
     modalMetaRow: {
       display: "grid",
       gridTemplateColumns: "1fr 48px 48px",
@@ -4031,6 +4808,25 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
+            <div style={styles.searchRow}>
+              <input
+                style={styles.searchInput}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search tasks"
+                aria-label="Search tasks"
+              />
+              <button
+                style={styles.clearSearchButton}
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                title="Clear search"
+                disabled={!searchQuery}
+              >
+                ×
+              </button>
+            </div>
+
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
                 <input
@@ -4285,9 +5081,11 @@ export default function TodoeyPage() {
               </div>
             ) : null}
 
-            {visibleTasks.length === 0 ? (
+            {!hasVisibleContent ? (
               <div style={styles.empty}>
-                {showCompleted
+                {searchQuery.trim()
+                  ? "No matching tasks."
+                  : showCompleted
                   ? "No completed tasks."
                   : viewMode === "future"
                   ? "No future tasks."
@@ -4295,10 +5093,11 @@ export default function TodoeyPage() {
                   ? "No recurring tasks."
                   : "Nothing showing right now."}
               </div>
-            ) : (
+            ) : visibleTasks.length > 0 ? (
               <div style={styles.listWrap}>
                 {visibleTasks.map((task, index) => {
                   const isCompleting = completingTaskIds.includes(task.id);
+                  const taskSubtaskSummary = subtaskSummary(task);
 
                   return (
                   <div
@@ -4355,6 +5154,9 @@ export default function TodoeyPage() {
                             )} · Next: ${dueText(task.dueDate)}`
                           : dueText(task.dueDate)}
                       </div>
+                      {taskSubtaskSummary ? (
+                        <div style={styles.taskMetaLine}>{taskSubtaskSummary}</div>
+                      ) : null}
                     </div>
 
                     {viewMode === "recurring" ? (
@@ -4379,7 +5181,36 @@ export default function TodoeyPage() {
                   );
                 })}
               </div>
-            )}
+            ) : null}
+
+            {showCompleted && visibleCompletionHistory.length > 0 ? (
+              <div style={styles.historyList}>
+                <div style={styles.historyHeader}>Completed history</div>
+                {visibleCompletionHistory.map((item, index) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      ...styles.historyItem,
+                      borderBottom:
+                        index === visibleCompletionHistory.length - 1
+                          ? "none"
+                          : styles.historyItem.borderBottom,
+                    }}
+                  >
+                    <div style={styles.historyTitle}>{item.title}</div>
+                    <div style={styles.historyMeta}>
+                      {new Intl.DateTimeFormat("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      }).format(new Date(item.completedAt))}
+                      {item.recurring ? " - recurring" : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div style={styles.controlsRow}>
               <button
@@ -4398,6 +5229,15 @@ export default function TodoeyPage() {
 
             {isSupabaseConfigured && user ? (
               <div style={styles.signOutArea}>
+                <button
+                  style={styles.passkeySetupButton}
+                  onClick={toggleDailyReminder}
+                >
+                  {reminderSettings.enabled ? "Daily reminder on" : "Enable daily reminder"}
+                </button>
+                {reminderNotice ? (
+                  <div style={styles.accountNotice}>{reminderNotice}</div>
+                ) : null}
                 {passkeySupported ? (
                   <button
                     style={styles.passkeySetupButton}
@@ -4653,6 +5493,55 @@ export default function TodoeyPage() {
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
               />
+            </div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>Subtasks</label>
+              {editSubtasks.length > 0 ? (
+                <div style={styles.subtaskList}>
+                  {editSubtasks.map((subtask) => (
+                    <div key={subtask.id} style={styles.subtaskRow}>
+                      <input
+                        style={styles.subtaskCheckbox}
+                        type="checkbox"
+                        checked={subtask.done}
+                        onChange={() => toggleEditSubtask(subtask.id)}
+                        aria-label={`Mark ${subtask.title} done`}
+                      />
+                      <div
+                        style={{
+                          ...styles.subtaskTitle,
+                          ...(subtask.done ? styles.subtaskTitleDone : {}),
+                        }}
+                      >
+                        {subtask.title}
+                      </div>
+                      <button
+                        style={styles.subtaskDeleteButton}
+                        onClick={() => deleteEditSubtask(subtask.id)}
+                        aria-label={`Delete subtask ${subtask.title}`}
+                        title="Delete subtask"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div style={styles.subtaskCreateRow}>
+                <input
+                  style={styles.input}
+                  value={newSubtaskTitle}
+                  onChange={(event) => setNewSubtaskTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") addEditSubtask();
+                  }}
+                  placeholder="Add subtask"
+                />
+                <button style={styles.saveButton} onClick={addEditSubtask}>
+                  Add
+                </button>
+              </div>
             </div>
 
             <div style={styles.fieldGroup}>
