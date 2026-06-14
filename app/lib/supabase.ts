@@ -12,6 +12,9 @@ export const supabase = isSupabaseConfigured
       auth: {
         autoRefreshToken: true,
         persistSession: true,
+        experimental: {
+          passkey: true,
+        },
       },
     })
   : null;

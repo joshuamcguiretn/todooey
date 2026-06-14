@@ -1371,6 +1371,42 @@ function useIsDesktop() {
   return isDesktop;
 }
 
+type PlatformCredentialConstructor = typeof PublicKeyCredential & {
+  isUserVerifyingPlatformAuthenticatorAvailable?: () => Promise<boolean>;
+};
+
+function passkeyErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: unknown }).message)
+        : String(error ?? "");
+  const lowerMessage = message.toLowerCase();
+
+  if (lowerMessage.includes("abort") || lowerMessage.includes("cancel")) {
+    return "Fingerprint sign-in was canceled.";
+  }
+
+  if (
+    lowerMessage.includes("not support") ||
+    lowerMessage.includes("secure context")
+  ) {
+    return "Fingerprint sign-in is not available on this device.";
+  }
+
+  if (
+    lowerMessage.includes("passkey") &&
+    (lowerMessage.includes("disable") ||
+      lowerMessage.includes("enable") ||
+      lowerMessage.includes("experimental"))
+  ) {
+    return "Passkeys need to be enabled in Supabase Auth first.";
+  }
+
+  return message || "Fingerprint sign-in did not finish.";
+}
+
 function dbTaskListToTaskList(list: DbTaskList): TaskList {
   return normalizeTaskList({
     id: list.id,
@@ -1729,6 +1765,9 @@ export default function TodoeyPage() {
   const [authPassword, setAuthPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyNotice, setPasskeyNotice] = useState("");
   const [cloudLoaded, setCloudLoaded] = useState(!isSupabaseConfigured);
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
@@ -1860,6 +1899,36 @@ export default function TodoeyPage() {
 
     return () => {
       isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!window.isSecureContext || !("PublicKeyCredential" in window)) return;
+
+    let isMounted = true;
+    const credential = window.PublicKeyCredential as PlatformCredentialConstructor;
+
+    async function checkPasskeySupport() {
+      try {
+        const isAvailable = credential.isUserVerifyingPlatformAuthenticatorAvailable
+          ? await credential.isUserVerifyingPlatformAuthenticatorAvailable()
+          : true;
+
+        if (isMounted) {
+          setPasskeySupported(Boolean(isAvailable));
+        }
+      } catch {
+        if (isMounted) {
+          setPasskeySupported(false);
+        }
+      }
+    }
+
+    checkPasskeySupport();
+
+    return () => {
+      isMounted = false;
     };
   }, []);
 
@@ -2315,7 +2384,7 @@ export default function TodoeyPage() {
   }
 
   async function submitAuth(mode: "sign-in" | "sign-up") {
-    if (!supabase || authBusy) return;
+    if (!supabase || authBusy || passkeyBusy) return;
 
     const email = authEmail.trim();
     if (!email || !authPassword) {
@@ -2356,8 +2425,73 @@ export default function TodoeyPage() {
     setAuthMessage("Signed in. Sync is starting.");
   }
 
+  async function signInWithPasskey() {
+    if (!supabase || authBusy || passkeyBusy) return;
+
+    if (!passkeySupported) {
+      setAuthMessage("Fingerprint sign-in is not available on this device.");
+      return;
+    }
+
+    setPasskeyBusy(true);
+    setAuthMessage("Use your fingerprint or screen lock.");
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPasskey();
+
+      if (error) {
+        setAuthMessage(passkeyErrorMessage(error));
+        return;
+      }
+
+      if (!data?.session && !data?.user) {
+        setAuthMessage("Fingerprint sign-in did not finish.");
+        return;
+      }
+
+      setAuthPassword("");
+      setAuthMessage("Signed in. Sync is starting.");
+    } catch (error) {
+      setAuthMessage(passkeyErrorMessage(error));
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
+  async function registerPasskey() {
+    if (!supabase || authBusy || passkeyBusy) return;
+
+    if (!user) {
+      setPasskeyNotice("Sign in first, then enable fingerprint sign-in.");
+      return;
+    }
+
+    if (!passkeySupported) {
+      setPasskeyNotice("Fingerprint sign-in is not available on this device.");
+      return;
+    }
+
+    setPasskeyBusy(true);
+    setPasskeyNotice("Use your fingerprint or screen lock to enable it.");
+
+    try {
+      const { error } = await supabase.auth.registerPasskey();
+
+      if (error) {
+        setPasskeyNotice(passkeyErrorMessage(error));
+        return;
+      }
+
+      setPasskeyNotice("Fingerprint sign-in is ready on this device.");
+    } catch (error) {
+      setPasskeyNotice(passkeyErrorMessage(error));
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
   async function signOut() {
-    if (!supabase || authBusy) return;
+    if (!supabase || authBusy || passkeyBusy) return;
 
     setAuthBusy(true);
     const { error } = await supabase.auth.signOut();
@@ -2371,6 +2505,7 @@ export default function TodoeyPage() {
     setUser(null);
     setCloudLoaded(false);
     setAuthPassword("");
+    setPasskeyNotice("");
     setAuthMessage("Signed out.");
   }
 
@@ -3090,6 +3225,16 @@ export default function TodoeyPage() {
       gridTemplateColumns: "1fr 1fr",
       gap: "8px",
     } as React.CSSProperties,
+    passkeyButton: {
+      padding: "10px 12px",
+      borderRadius: "10px",
+      border: "1px solid #5d4a8d",
+      background: "#241a36",
+      color: "#f6f1ff",
+      cursor: "pointer",
+      fontWeight: 800,
+      fontSize: "14px",
+    } as React.CSSProperties,
     toggleButton: {
       padding: "10px 12px",
       borderRadius: "10px",
@@ -3111,11 +3256,33 @@ export default function TodoeyPage() {
       fontSize: "14px",
     } as React.CSSProperties,
     signOutArea: {
-      display: "flex",
-      justifyContent: "center",
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      justifyItems: "center",
+      gap: "8px",
       marginTop: "18px",
       paddingTop: "14px",
       borderTop: "1px solid #24242a",
+    } as React.CSSProperties,
+    passkeySetupButton: {
+      width: "100%",
+      maxWidth: "240px",
+      padding: "10px 14px",
+      borderRadius: "10px",
+      border: "1px solid #5d4a8d",
+      background: "#241a36",
+      color: "#f6f1ff",
+      cursor: "pointer",
+      fontWeight: 800,
+      fontSize: "13px",
+    } as React.CSSProperties,
+    accountNotice: {
+      maxWidth: "280px",
+      color: "#aeb0b8",
+      fontSize: "12px",
+      fontWeight: 700,
+      lineHeight: 1.35,
+      textAlign: "center",
     } as React.CSSProperties,
     signOutButton: {
       padding: "10px 14px",
@@ -3783,18 +3950,27 @@ export default function TodoeyPage() {
                   <button
                     style={styles.saveButton}
                     onClick={() => submitAuth("sign-in")}
-                    disabled={authBusy}
+                    disabled={authBusy || passkeyBusy}
                   >
                     Sign in
                   </button>
                   <button
                     style={styles.cancelButton}
                     onClick={() => submitAuth("sign-up")}
-                    disabled={authBusy}
+                    disabled={authBusy || passkeyBusy}
                   >
                     Create account
                   </button>
                 </div>
+                {passkeySupported ? (
+                  <button
+                    style={styles.passkeyButton}
+                    onClick={signInWithPasskey}
+                    disabled={authBusy || passkeyBusy}
+                  >
+                    {passkeyBusy ? "Opening fingerprint..." : "Use fingerprint"}
+                  </button>
+                ) : null}
               </div>
 
               {authMessage ? (
@@ -4222,10 +4398,22 @@ export default function TodoeyPage() {
 
             {isSupabaseConfigured && user ? (
               <div style={styles.signOutArea}>
+                {passkeySupported ? (
+                  <button
+                    style={styles.passkeySetupButton}
+                    onClick={registerPasskey}
+                    disabled={authBusy || passkeyBusy}
+                  >
+                    {passkeyBusy ? "Opening fingerprint..." : "Enable fingerprint sign-in"}
+                  </button>
+                ) : null}
+                {passkeyNotice ? (
+                  <div style={styles.accountNotice}>{passkeyNotice}</div>
+                ) : null}
                 <button
                   style={styles.signOutButton}
                   onClick={signOut}
-                  disabled={authBusy}
+                  disabled={authBusy || passkeyBusy}
                 >
                   {authBusy ? "Signing out..." : "Sign out"}
                 </button>
