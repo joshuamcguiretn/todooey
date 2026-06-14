@@ -61,8 +61,6 @@ const EMAIL_REFERENCE_LETTER_COUNT = 3;
 const EMAIL_REFERENCE_DIGIT_COUNT = 3;
 const EMAIL_REFERENCE_DUE_DAYS = 3;
 const EMAIL_REFERENCE_PATTERN = /\bRef:\s*[A-Z]{3}\d{3}\b/i;
-const LAUNCH_SPLASH_MIN_MS = 1200;
-const LAUNCH_SPLASH_MAX_MS = 5200;
 const DEFAULT_TASK_LISTS: TaskList[] = [
   { id: DEFAULT_LIST_ID, name: "Home", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "work", name: "Work", createdAt: "2026-01-01T00:00:01.000Z" },
@@ -1732,8 +1730,6 @@ export default function TodoeyPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [cloudLoaded, setCloudLoaded] = useState(!isSupabaseConfigured);
-  const [launchSplashReleased, setLaunchSplashReleased] = useState(false);
-  const [launchSplashTimedOut, setLaunchSplashTimedOut] = useState(false);
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(formatDateInput());
   const [priority, setPriority] = useState<Priority>(2);
@@ -1806,31 +1802,23 @@ export default function TodoeyPage() {
   }, []);
 
   useEffect(() => {
-    const minTimer = window.setTimeout(() => {
-      setLaunchSplashReleased(true);
-    }, LAUNCH_SPLASH_MIN_MS);
-    const maxTimer = window.setTimeout(() => {
-      setLaunchSplashTimedOut(true);
-    }, LAUNCH_SPLASH_MAX_MS);
-
-    return () => {
-      window.clearTimeout(minTimer);
-      window.clearTimeout(maxTimer);
-    };
-  }, []);
-
-  useEffect(() => {
     const localTasks = loadLocalTasks();
     const localDeletedTaskListIds = loadDeletedTaskListIds();
     const localTaskLists = loadLocalTaskLists(localDeletedTaskListIds);
+    let isCancelled = false;
 
-    window.setTimeout(() => {
+    window.queueMicrotask(() => {
+      if (isCancelled) return;
       setDeletedTaskListIds(localDeletedTaskListIds);
       setTaskLists(localTaskLists);
       setActiveListId(loadActiveListId(localTaskLists));
       setTasks(localTasks);
       setTasksLoaded(true);
-    }, 0);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1862,11 +1850,17 @@ export default function TodoeyPage() {
 
   useEffect(() => {
     const savedProgress = loadLocalDailyProgress();
+    let isCancelled = false;
 
-    window.setTimeout(() => {
+    window.queueMicrotask(() => {
+      if (isCancelled) return;
       setDailyProgress(savedProgress.filter((progress) => progress.date === formatDateInput()));
       setDailyProgressLoaded(true);
-    }, 0);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -2875,6 +2869,7 @@ export default function TodoeyPage() {
       margin: isDesktop ? "0 auto" : 0,
     } as React.CSSProperties,
     shell: {
+      position: "relative",
       minHeight: isDesktop ? "calc(100vh - 56px)" : "100vh",
       background: "#17171a",
       border: isDesktop ? "1px solid #2f2f35" : "none",
@@ -2888,6 +2883,24 @@ export default function TodoeyPage() {
       textAlign: "center",
       userSelect: "none",
       WebkitUserSelect: "none",
+    } as React.CSSProperties,
+    syncPill: {
+      position: "absolute",
+      top: "10px",
+      right: "10px",
+      zIndex: 45,
+      padding: "5px 8px",
+      borderRadius: "999px",
+      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(17, 17, 20, 0.76)",
+      color: "#efe7ff",
+      fontSize: "11px",
+      fontWeight: 800,
+      lineHeight: 1,
+      letterSpacing: 0,
+      pointerEvents: "none",
+      boxShadow: "0 8px 22px rgba(0,0,0,0.26)",
+      backdropFilter: "blur(8px)",
     } as React.CSSProperties,
     headerButton: {
       position: "relative",
@@ -3717,14 +3730,13 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
   };
 
-  const launchSplashReady =
-    launchSplashTimedOut ||
-    (authLoaded &&
-      tasksLoaded &&
-      dailyProgressLoaded &&
-      (!isSupabaseConfigured || !user || cloudLoaded));
+  const launchSplashReady = tasksLoaded && dailyProgressLoaded;
+  const syncIndicatorText =
+    isSupabaseConfigured && (!authLoaded || (Boolean(user) && !cloudLoaded))
+      ? "Updating..."
+      : "";
 
-  if (!launchSplashReleased || !launchSplashReady) {
+  if (!launchSplashReady) {
     return (
       <div
         style={styles.launchSplash}
@@ -3736,63 +3748,59 @@ export default function TodoeyPage() {
     );
   }
 
-  if (isSupabaseConfigured && (!authLoaded || !user)) {
+  if (isSupabaseConfigured && authLoaded && !user) {
     return (
       <div style={styles.page}>
         <div style={styles.authWrap}>
           <div style={styles.authCard}>
             <div style={styles.authBrand}>ToDooey</div>
 
-            {!authLoaded ? (
-              <div style={styles.accountSubtext}>Checking account...</div>
-            ) : (
-              <>
-                <div style={styles.accountTitle}>Sign in</div>
-                <div style={styles.accountSubtext}>Tasks, everywhere.</div>
+            <>
+              <div style={styles.accountTitle}>Sign in</div>
+              <div style={styles.accountSubtext}>Tasks, everywhere.</div>
 
-                <div style={styles.accountForm}>
-                  <input
-                    style={styles.input}
-                    type="email"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="Email"
-                    autoComplete="email"
-                  />
-                  <input
-                    style={styles.input}
-                    type="password"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitAuth("sign-in");
-                    }}
-                    placeholder="Password"
-                    autoComplete="current-password"
-                  />
-                  <div style={styles.accountButtonRow}>
-                    <button
-                      style={styles.saveButton}
-                      onClick={() => submitAuth("sign-in")}
-                      disabled={authBusy}
-                    >
-                      Sign in
-                    </button>
-                    <button
-                      style={styles.cancelButton}
-                      onClick={() => submitAuth("sign-up")}
-                      disabled={authBusy}
-                    >
-                      Create account
-                    </button>
-                  </div>
+              <div style={styles.accountForm}>
+                <input
+                  style={styles.input}
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="Email"
+                  autoComplete="email"
+                />
+                <input
+                  style={styles.input}
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitAuth("sign-in");
+                  }}
+                  placeholder="Password"
+                  autoComplete="current-password"
+                />
+                <div style={styles.accountButtonRow}>
+                  <button
+                    style={styles.saveButton}
+                    onClick={() => submitAuth("sign-in")}
+                    disabled={authBusy}
+                  >
+                    Sign in
+                  </button>
+                  <button
+                    style={styles.cancelButton}
+                    onClick={() => submitAuth("sign-up")}
+                    disabled={authBusy}
+                  >
+                    Create account
+                  </button>
                 </div>
+              </div>
 
-                {authMessage ? (
-                  <div style={styles.accountSubtext}>{authMessage}</div>
-                ) : null}
-              </>
-            )}
+              {authMessage ? (
+                <div style={styles.accountSubtext}>{authMessage}</div>
+              ) : null}
+            </>
           </div>
         </div>
       </div>
@@ -3803,6 +3811,7 @@ export default function TodoeyPage() {
     <div style={styles.page}>
       <div style={styles.wrap}>
         <div style={styles.shell}>
+          {syncIndicatorText ? <div style={styles.syncPill}>{syncIndicatorText}</div> : null}
           <div style={styles.header}>
             <button
               style={styles.headerButton}
