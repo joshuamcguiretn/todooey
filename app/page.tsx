@@ -70,10 +70,6 @@ const WEEKLY_INTERVAL_ENCODING_BASE = 1000;
 const IMAGE_TARGET_BYTES = 550 * 1024;
 const IMAGE_MAX_EDGE_STEPS = [1600, 1400, 1200, 1000, 850];
 const IMAGE_QUALITY_STEPS = [0.86, 0.8, 0.74, 0.68, 0.62];
-const EMAIL_REFERENCE_LETTER_COUNT = 3;
-const EMAIL_REFERENCE_DIGIT_COUNT = 3;
-const EMAIL_REFERENCE_DUE_DAYS = 3;
-const EMAIL_REFERENCE_PATTERN = /\bRef:\s*[A-Z]{3}\d{3}\b/i;
 const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
   enabled: false,
   time: "09:00",
@@ -181,53 +177,8 @@ function dateAtEarliestToday(date: string) {
   return date < today ? today : date;
 }
 
-function dateDaysFromToday(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return formatDateInput(date);
-}
-
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function generateEmailReferenceCode() {
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const digits = "0123456789";
-  const valueCount = EMAIL_REFERENCE_LETTER_COUNT + EMAIL_REFERENCE_DIGIT_COUNT;
-  const values = new Uint8Array(valueCount);
-
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(values);
-  } else {
-    values.forEach((_, index) => {
-      values[index] = Math.floor(Math.random() * 256);
-    });
-  }
-
-  const letterPart = Array.from(
-    values.slice(0, EMAIL_REFERENCE_LETTER_COUNT),
-    (value) => letters[value % letters.length]
-  ).join("");
-  const digitPart = Array.from(
-    values.slice(EMAIL_REFERENCE_LETTER_COUNT),
-    (value) => digits[value % digits.length]
-  ).join("");
-
-  return `${letterPart}${digitPart}`;
-}
-
-function withEmailReferenceCode(title: string, code: string) {
-  const reference = `Ref: ${code}`;
-  const cleaned = title.trim();
-
-  if (!cleaned) return reference;
-
-  if (EMAIL_REFERENCE_PATTERN.test(cleaned)) {
-    return cleaned.replace(EMAIL_REFERENCE_PATTERN, reference).replace(/\s{2,}/g, " ").trim();
-  }
-
-  return `${cleaned} ${reference}`;
 }
 
 function hasTextSelectionInside(element: HTMLElement) {
@@ -2204,6 +2155,7 @@ export default function TodoeyPage() {
   const [showNewDescription, setShowNewDescription] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"current" | "future" | "recurring">("current");
   const [dailyProgress, setDailyProgress] = useState<DailyProgress[]>([]);
   const [dailyProgressLoaded, setDailyProgressLoaded] = useState(false);
@@ -2242,6 +2194,7 @@ export default function TodoeyPage() {
   const reminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editDateInputRef = useRef<HTMLInputElement | null>(null);
   const taskSelectionWasActiveOnPointerDownRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   function rememberTaskChange(taskId: string) {
     if (!user) return;
@@ -2742,6 +2695,14 @@ export default function TodoeyPage() {
   }, []);
 
   useEffect(() => {
+    if (!searchOpen) return;
+
+    window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 0);
+  }, [searchOpen]);
+
+  useEffect(() => {
     if (!editingTaskId && !fullScreenImage) return;
 
     const handleBackButton = () => {
@@ -2763,7 +2724,7 @@ export default function TodoeyPage() {
   }, [clearEditState, editingTaskId, fullScreenImage]);
 
   useEffect(() => {
-    if (!editingTaskId && !fullScreenImage && !listSwitcherOpen) return;
+    if (!editingTaskId && !fullScreenImage && !listSwitcherOpen && !searchOpen) return;
 
     const handleEscapeKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -2781,6 +2742,10 @@ export default function TodoeyPage() {
         setEditListName("");
         setDeleteListConfirmName("");
       }
+
+      if (searchOpen) {
+        setSearchOpen(false);
+      }
     };
 
     window.addEventListener("keydown", handleEscapeKey);
@@ -2788,7 +2753,7 @@ export default function TodoeyPage() {
     return () => {
       window.removeEventListener("keydown", handleEscapeKey);
     };
-  }, [editingTaskId, fullScreenImage, listSwitcherOpen]);
+  }, [editingTaskId, fullScreenImage, listSwitcherOpen, searchOpen]);
 
   const activeTaskList = useMemo(() => {
     return taskLists.find((list) => list.id === activeListId) ?? taskLists[0] ?? DEFAULT_TASK_LISTS[0];
@@ -3175,12 +3140,6 @@ export default function TodoeyPage() {
         document.activeElement.blur();
       }
     }, 0);
-  }
-
-  function createEmailReferenceTask() {
-    const code = generateEmailReferenceCode();
-    setTitle((currentTitle) => withEmailReferenceCode(currentTitle, code));
-    setDueDate(dateDaysFromToday(EMAIL_REFERENCE_DUE_DAYS));
   }
 
   function openEditor(task: Task) {
@@ -3824,13 +3783,33 @@ export default function TodoeyPage() {
       transition: "width 0.5s ease",
     } as React.CSSProperties,
     section: {
-      padding: "14px 12px 96px",
+      padding: "14px 12px 22px",
     } as React.CSSProperties,
-    searchRow: {
-      display: "grid",
-      gridTemplateColumns: "1fr 42px",
-      gap: "8px",
+    sectionActionRow: {
+      display: "flex",
+      justifyContent: "flex-end",
       marginBottom: "10px",
+    } as React.CSSProperties,
+    searchCornerButton: {
+      width: "46px",
+      height: "46px",
+      borderRadius: "14px",
+      border: "1px solid #a78bfa",
+      background: "#8b5cf6",
+      color: "#ffffff",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: "20px",
+      boxShadow: "0 10px 24px rgba(139, 92, 246, 0.28)",
+      userSelect: "none",
+      WebkitUserSelect: "none",
+    } as React.CSSProperties,
+    activeSearchCornerButton: {
+      background: "#a78bfa",
+      border: "1px solid #c4b5fd",
+      boxShadow: "0 0 0 3px rgba(139, 92, 246, 0.26)",
     } as React.CSSProperties,
     searchInput: {
       width: "100%",
@@ -3843,40 +3822,21 @@ export default function TodoeyPage() {
       fontWeight: 700,
       outline: "none",
     } as React.CSSProperties,
-    clearSearchButton: {
-      width: "42px",
-      height: "42px",
-      borderRadius: "12px",
-      border: "1px solid #3f3f48",
-      background: "#17171a",
-      color: "#d7d7dc",
-      fontSize: "22px",
-      fontWeight: 800,
-      cursor: "pointer",
-      lineHeight: 1,
-    } as React.CSSProperties,
     viewToggleRow: {
       display: "flex",
       gap: "8px",
       marginBottom: "12px",
     } as React.CSSProperties,
     bottomNav: {
-      position: "fixed",
-      left: isDesktop ? "50%" : "10px",
-      right: isDesktop ? "auto" : "10px",
-      bottom: isDesktop ? "28px" : "10px",
-      width: isDesktop ? "calc(520px - 36px)" : "auto",
-      transform: isDesktop ? "translateX(-50%)" : "none",
-      zIndex: 40,
       display: "grid",
       gridTemplateColumns: "1fr 1fr 1fr",
       gap: "8px",
       padding: "8px",
+      marginTop: "14px",
+      marginBottom: "12px",
       borderRadius: "18px",
       border: "1px solid #2f2f35",
-      background: "rgba(17, 17, 20, 0.96)",
-      boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
-      backdropFilter: "blur(10px)",
+      background: "#111114",
     } as React.CSSProperties,
     viewToggleButton: {
       flex: 1,
@@ -4016,7 +3976,7 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     mobileControls: {
       display: "grid",
-      gridTemplateColumns: "1fr 48px 56px",
+      gridTemplateColumns: "1fr 56px",
       gap: "10px",
       alignItems: "center",
       marginBottom: "10px",
@@ -4052,22 +4012,6 @@ export default function TodoeyPage() {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-    } as React.CSSProperties,
-    emailReferenceButton: {
-      width: "48px",
-      height: "50px",
-      borderRadius: "12px",
-      border: "1px solid #3f3f48",
-      background: "#09090b",
-      color: "#ffffff",
-      fontSize: "22px",
-      cursor: "pointer",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      lineHeight: 1,
-      userSelect: "none",
-      WebkitUserSelect: "none",
     } as React.CSSProperties,
     mobileMetaRow: {
       display: "grid",
@@ -4847,22 +4791,17 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.searchRow}>
-              <input
-                style={styles.searchInput}
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search tasks"
-                aria-label="Search tasks"
-              />
+            <div style={styles.sectionActionRow}>
               <button
-                style={styles.clearSearchButton}
-                onClick={() => setSearchQuery("")}
-                aria-label="Clear search"
-                title="Clear search"
-                disabled={!searchQuery}
+                style={{
+                  ...styles.searchCornerButton,
+                  ...(searchQuery.trim() ? styles.activeSearchCornerButton : {}),
+                }}
+                onClick={() => setSearchOpen(true)}
+                aria-label={searchQuery.trim() ? "Search tasks. Search is active." : "Search tasks"}
+                title={searchQuery.trim() ? "Search active" : "Search tasks"}
               >
-                ×
+                {"\u{1F50D}"}
               </button>
             </div>
 
@@ -4887,14 +4826,6 @@ export default function TodoeyPage() {
                   {showNewDescription ? "▲" : "▼"}
                 </button>
               </div>
-              <button
-                style={styles.emailReferenceButton}
-                onClick={createEmailReferenceTask}
-                aria-label="Create email reference code"
-                title="Create email reference code"
-              >
-                ✉
-              </button>
               <button
                 style={styles.addButton}
                 onClick={addTask}
@@ -5269,6 +5200,47 @@ export default function TodoeyPage() {
               ) : null}
             </div>
 
+            <div style={styles.bottomNav}>
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "current" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("current");
+                  setShowCompleted(false);
+                }}
+              >
+                Current
+              </button>
+
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "future" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("future");
+                  setShowCompleted(false);
+                }}
+              >
+                Future
+              </button>
+
+              <button
+                style={{
+                  ...styles.viewToggleButton,
+                  ...(viewMode === "recurring" ? styles.activeViewToggleButton : {}),
+                }}
+                onClick={() => {
+                  setViewMode("recurring");
+                  setShowCompleted(false);
+                }}
+              >
+                Recurring
+              </button>
+            </div>
+
             {isSupabaseConfigured && user ? (
               <div style={styles.signOutArea}>
                 <button
@@ -5303,47 +5275,6 @@ export default function TodoeyPage() {
             ) : null}
           </div>
         </div>
-      </div>
-
-      <div style={styles.bottomNav}>
-        <button
-          style={{
-            ...styles.viewToggleButton,
-            ...(viewMode === "current" ? styles.activeViewToggleButton : {}),
-          }}
-          onClick={() => {
-            setViewMode("current");
-            setShowCompleted(false);
-          }}
-        >
-          Current
-        </button>
-
-        <button
-          style={{
-            ...styles.viewToggleButton,
-            ...(viewMode === "future" ? styles.activeViewToggleButton : {}),
-          }}
-          onClick={() => {
-            setViewMode("future");
-            setShowCompleted(false);
-          }}
-        >
-          Future
-        </button>
-
-        <button
-          style={{
-            ...styles.viewToggleButton,
-            ...(viewMode === "recurring" ? styles.activeViewToggleButton : {}),
-          }}
-          onClick={() => {
-            setViewMode("recurring");
-            setShowCompleted(false);
-          }}
-        >
-          Recurring
-        </button>
       </div>
 
       {listSwitcherOpen ? (
@@ -5473,6 +5404,41 @@ export default function TodoeyPage() {
               </>
             )}
               </div>
+        </div>
+      ) : null}
+
+      {searchOpen ? (
+        <div style={styles.modalOverlay} onClick={() => setSearchOpen(false)}>
+          <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.listManageHeader}>
+              <div style={{ ...styles.modalTitle, marginBottom: 0 }}>Search</div>
+              <button style={styles.cancelButton} onClick={() => setSearchOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <input
+              ref={searchInputRef}
+              style={styles.searchInput}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search tasks"
+              aria-label="Search tasks"
+            />
+
+            <div style={styles.modalActions}>
+              <button
+                style={styles.cancelButton}
+                onClick={() => setSearchQuery("")}
+                disabled={!searchQuery.trim()}
+              >
+                Clear
+              </button>
+              <button style={styles.saveButton} onClick={() => setSearchOpen(false)}>
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
