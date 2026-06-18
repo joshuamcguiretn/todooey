@@ -3663,6 +3663,7 @@ export default function TodoeyPage() {
       boxShadow: isDesktop ? "0 24px 80px rgba(0,0,0,0.42)" : "none",
     } as React.CSSProperties,
     header: {
+      position: "relative",
       background: "#3a3a3f",
       padding: "10px 18px 12px",
       textAlign: "center",
@@ -3729,6 +3730,29 @@ export default function TodoeyPage() {
       userSelect: "none",
       WebkitUserSelect: "none",
     } as React.CSSProperties,
+    headerSearchButton: {
+      position: "absolute",
+      right: "18px",
+      top: "50%",
+      transform: "translateY(-50%)",
+      width: "44px",
+      height: "44px",
+      border: "none",
+      background: "transparent",
+      color: "#c4b5fd",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+      userSelect: "none",
+      WebkitTapHighlightColor: "transparent",
+      WebkitUserSelect: "none",
+    } as React.CSSProperties,
+    activeHeaderSearchButton: {
+      color: "#f5f3ff",
+      filter: "drop-shadow(0 0 8px rgba(196, 181, 253, 0.72))",
+    } as React.CSSProperties,
     banner: {
       background: "#c39af1",
       color: "#101012",
@@ -3784,32 +3808,6 @@ export default function TodoeyPage() {
     } as React.CSSProperties,
     section: {
       padding: "14px 12px 22px",
-    } as React.CSSProperties,
-    sectionActionRow: {
-      display: "flex",
-      justifyContent: "flex-end",
-      marginBottom: "10px",
-    } as React.CSSProperties,
-    searchCornerButton: {
-      width: "46px",
-      height: "46px",
-      borderRadius: "14px",
-      border: "1px solid #a78bfa",
-      background: "#8b5cf6",
-      color: "#ffffff",
-      cursor: "pointer",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: "20px",
-      boxShadow: "0 10px 24px rgba(139, 92, 246, 0.28)",
-      userSelect: "none",
-      WebkitUserSelect: "none",
-    } as React.CSSProperties,
-    activeSearchCornerButton: {
-      background: "#a78bfa",
-      border: "1px solid #c4b5fd",
-      boxShadow: "0 0 0 3px rgba(139, 92, 246, 0.26)",
     } as React.CSSProperties,
     searchInput: {
       width: "100%",
@@ -4768,6 +4766,30 @@ export default function TodoeyPage() {
               <span style={styles.headerWord}>ToDooey</span>
               <span style={styles.listSplash}>{activeTaskList.name}</span>
             </button>
+            <button
+              style={{
+                ...styles.headerSearchButton,
+                ...(searchQuery.trim() ? styles.activeHeaderSearchButton : {}),
+              }}
+              onClick={() => setSearchOpen(true)}
+              aria-label={searchQuery.trim() ? "Search tasks. Search is active." : "Search tasks"}
+              title={searchQuery.trim() ? "Search active" : "Search tasks"}
+            >
+              <svg
+                aria-hidden="true"
+                width="30"
+                height="30"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-4.2-4.2" />
+              </svg>
+            </button>
           </div>
 
           <div style={styles.banner}>
@@ -4791,20 +4813,6 @@ export default function TodoeyPage() {
           </div>
 
           <div style={styles.section}>
-            <div style={styles.sectionActionRow}>
-              <button
-                style={{
-                  ...styles.searchCornerButton,
-                  ...(searchQuery.trim() ? styles.activeSearchCornerButton : {}),
-                }}
-                onClick={() => setSearchOpen(true)}
-                aria-label={searchQuery.trim() ? "Search tasks. Search is active." : "Search tasks"}
-                title={searchQuery.trim() ? "Search active" : "Search tasks"}
-              >
-                {"\u{1F50D}"}
-              </button>
-            </div>
-
             <div style={styles.mobileControls}>
               <div style={styles.taskInputWrap}>
                 <input
