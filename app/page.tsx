@@ -1632,6 +1632,7 @@ function reminderNotificationBody(tasks: Task[]) {
 function nextReminderDelay(time: string, lastNotifiedDate: string) {
   const [hours, minutes] = time.split(":").map(Number);
   const now = new Date();
+  const today = formatDateInput(now);
   const next = new Date();
   next.setHours(
     Number.isFinite(hours) ? hours : 9,
@@ -1640,11 +1641,16 @@ function nextReminderDelay(time: string, lastNotifiedDate: string) {
     0
   );
 
-  if (next <= now || lastNotifiedDate === formatDateInput()) {
+  if (lastNotifiedDate === today) {
     next.setDate(next.getDate() + 1);
+    return Math.max(1000, next.getTime() - now.getTime());
   }
 
-  return Math.max(1000, next.getTime() - now.getTime());
+  if (next <= now) {
+    return 1000;
+  }
+
+  return next.getTime() - now.getTime();
 }
 
 async function showTodoeyNotification(body: string) {
