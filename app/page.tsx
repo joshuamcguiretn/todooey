@@ -1,6 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
+import NextImage from "next/image";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
@@ -4189,13 +4190,20 @@ export default function TodoeyPage() {
     newDescriptionBox: {
       marginBottom: "16px",
     } as React.CSSProperties,
-    imagePreview: {
+    imagePreviewButton: {
+      position: "relative",
       width: "100%",
-      maxHeight: "220px",
-      objectFit: "cover",
-      borderRadius: "14px",
+      height: "220px",
+      padding: 0,
       border: "1px solid #3f3f48",
+      background: "transparent",
+      borderRadius: "14px",
+      overflow: "hidden",
       marginTop: "10px",
+      cursor: "pointer",
+    } as React.CSSProperties,
+    imagePreview: {
+      objectFit: "cover",
     } as React.CSSProperties,
     imageButtonRow: {
       display: "flex",
@@ -4444,9 +4452,12 @@ export default function TodoeyPage() {
       justifyContent: "center",
       padding: "14px",
     } as React.CSSProperties,
+    fullScreenImageFrame: {
+      position: "relative",
+      width: "100%",
+      height: "100%",
+    } as React.CSSProperties,
     fullScreenImage: {
-      maxWidth: "100%",
-      maxHeight: "100%",
       objectFit: "contain",
       borderRadius: "12px",
     } as React.CSSProperties,
@@ -4916,13 +4927,16 @@ export default function TodoeyPage() {
 
                 {newImageDataUrl ? (
                   <button
-                    style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
+                    style={styles.imagePreviewButton}
                     onClick={() => openFullScreenImage(newImageDataUrl)}
                   >
-                    <img
+                    <NextImage
+                      fill
+                      unoptimized
                       style={styles.imagePreview}
                       src={newImageDataUrl}
                       alt="Task attachment preview"
+                      sizes="(max-width: 768px) 100vw, 520px"
                     />
                   </button>
                 ) : null}
@@ -5464,11 +5478,16 @@ export default function TodoeyPage() {
 
       {fullScreenImage ? (
         <div style={styles.fullScreenImageOverlay} onClick={closeFullScreenImage}>
-          <img
-            style={styles.fullScreenImage}
-            src={fullScreenImage}
-            alt="Full size task attachment"
-          />
+          <div style={styles.fullScreenImageFrame}>
+            <NextImage
+              fill
+              unoptimized
+              style={styles.fullScreenImage}
+              src={fullScreenImage}
+              alt="Full size task attachment"
+              sizes="100vw"
+            />
+          </div>
         </div>
       ) : null}
 
@@ -5777,13 +5796,16 @@ export default function TodoeyPage() {
 
               {editImageDataUrl ? (
                 <button
-                  style={{ padding: 0, border: "none", background: "transparent", width: "100%" }}
+                  style={styles.imagePreviewButton}
                   onClick={() => openFullScreenImage(editImageDataUrl)}
                 >
-                  <img
+                  <NextImage
+                    fill
+                    unoptimized
                     style={styles.imagePreview}
                     src={editImageDataUrl}
                     alt="Task attachment preview"
+                    sizes="(max-width: 768px) 100vw, 520px"
                   />
                 </button>
               ) : null}
