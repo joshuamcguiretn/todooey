@@ -2761,6 +2761,34 @@ export default function TodoeyPage() {
     };
   }, [clearEditState, editingTaskId, fullScreenImage]);
 
+  useEffect(() => {
+    if (!editingTaskId && !fullScreenImage && !listSwitcherOpen) return;
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+
+      event.preventDefault();
+
+      if (fullScreenImage || editingTaskId) {
+        window.history.back();
+        return;
+      }
+
+      if (listSwitcherOpen) {
+        setListSwitcherOpen(false);
+        setEditingListId(null);
+        setEditListName("");
+        setDeleteListConfirmName("");
+      }
+    };
+
+    window.addEventListener("keydown", handleEscapeKey);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscapeKey);
+    };
+  }, [editingTaskId, fullScreenImage, listSwitcherOpen]);
+
   const activeTaskList = useMemo(() => {
     return taskLists.find((list) => list.id === activeListId) ?? taskLists[0] ?? DEFAULT_TASK_LISTS[0];
   }, [activeListId, taskLists]);
